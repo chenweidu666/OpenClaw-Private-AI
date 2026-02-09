@@ -19,6 +19,7 @@
   - [2.4 personal_info Skill](#24-personal_info-skill)
   - [2.5 nas_search Skill](#25-nas_search-skill)
   - [2.6 bilibili_summary Skill](#26-bilibili_summary-skill)
+  - [2.7 qwen_usage Skill](#27-qwen_usage-skill)
 - [3. 更多 Skill 思路](#3-更多-skill-思路)
 
 ---
@@ -104,8 +105,9 @@ metadata: { "openclaw": { "emoji": "🔧", "requires": { "bins": ["bash"] } } }
 | 3 | **personal_info** 👤 | 纯数据型 | 直接引用 SKILL.md | — |
 | 4 | **nas_search** 🗄️ | 命令执行型 | exec 调用脚本 | — |
 | 5 | **bilibili_summary** 📺 | API 服务型 | HTTP 调用 3060 GPU 服务 (whisper + Qwen3-32B) | AI 对话回复 |
+| 6 | **qwen_usage** 💰 | 命令执行型 (API) | exec 调用 Python 脚本查询阿里云 BSS 账单 API | — |
 
-四种 Skill 类型：**命令执行型**（脚本 + exec）、**定时推送型**（脚本 + cron + Webhook）、**纯数据型**（只有 SKILL.md）、**API 服务型**（调用远程 GPU 推理服务，3060 承担 GPU 计算 + LLM 总结）。
+五种 Skill 类型：**命令执行型**（脚本 + exec）、**定时推送型**（脚本 + cron + Webhook）、**纯数据型**（只有 SKILL.md）、**API 服务型**（调用远程 GPU 推理服务，3060 承担 GPU 计算 + LLM 总结）、**云 API 查询型**（调用云厂商管理 API 获取账户数据）。
 
 ```
 ~/.openclaw/skills/
@@ -121,11 +123,15 @@ metadata: { "openclaw": { "emoji": "🔧", "requires": { "bins": ["bash"] } } }
 ├── nas_search/            ← 命令执行型 (SSH 远程)
 │   ├── SKILL.md
 │   └── nas_search.sh
-└── bilibili_summary/      ← API 服务型 (3060 GPU + Qwen3-32B)
+├── bilibili_summary/      ← API 服务型 (3060 GPU + Qwen3-32B)
+│   ├── SKILL.md
+│   ├── bilibili_summary.sh   # 调度脚本 (curl → 3060 API)
+│   ├── transcribe_single.py  # Whisper 转写 (部署到 3060 Docker)
+│   └── server.py             # FastAPI 服务 (部署到 3060, systemd)
+└── qwen_usage/            ← 云 API 查询型 (阿里云 BSS OpenAPI)
     ├── SKILL.md
-    ├── bilibili_summary.sh   # 调度脚本 (curl → 3060 API)
-    ├── transcribe_single.py  # Whisper 转写 (部署到 3060 Docker)
-    └── server.py             # FastAPI 服务 (部署到 3060, systemd)
+    ├── query_usage.py         # 查询脚本 (alibabacloud SDK)
+    └── query_usage.sh         # 包装脚本 (加载 env + 自动安装依赖)
 ```
 
 ### 2.2 system_info Skill
@@ -1030,6 +1036,135 @@ sudo systemctl enable bilibili-transcribe
 
 ---
 
+### 2.7 qwen_usage Skill
+
+**① 目标与思路**
+
+**目标**：让 AI 能查询自己消耗了多少 API 费用——按天、按模型、按 token 类型的完整费用明细。
+
+**与其他 Skill 的区别**：这是一个**云 API 查询型 Skill** — 不执行本机命令，也不调用远程 GPU，而是通过阿里云 SDK 调用云厂商的管理 API（BSS OpenAPI）获取账单数据。需要额外的 RAM AccessKey 凭证。
+
+> DashScope 本身没有用量查询 API，需要通过阿里云统一的费用中心查询。
+
+**② 创建目录与脚本**
+
+```bash
+mkdir -p ~/.openclaw/skills/qwen_usage
+pip install alibabacloud-bssopenapi20171214 alibabacloud-tea-openapi
+```
+
+**query_usage.py** — 核心查询逻辑（精简）：
+
+```python
+# 阿里云 BSS OpenAPI 查询 DashScope 费用
+# 关键坑：ProductCode 不是 "dashscope" 而是 "sfm" (大模型服务平台百炼)
+
+# 1. 月度总费用
+overview_req = bss_models.QueryBillOverviewRequest(
+    billing_cycle="2026-02", product_code="sfm"
+)
+
+# 2. 逐天实例级明细（必须指定 BillingDate）
+for day in range(1, today + 1):
+    bill_req = bss_models.DescribeInstanceBillRequest(
+        billing_cycle="2026-02", billing_date=f"2026-02-{day:02d}",
+        product_code="sfm", granularity="DAILY", max_results=300
+    )
+    # instance_id 格式: "账户ID;实例ID;模型名;token类型;;0"
+    # 例: "3337639;llm-xxx;qwen3-14b;thinking_input_token;;0"
+    # 解析可得：按模型 + 按 token 类型的费用明细
+```
+
+**query_usage.sh** — 包装脚本：加载 `~/.openclaw/env` 环境变量 + 首次自动安装依赖。
+
+**③ 编写 SKILL.md**
+
+```markdown
+---
+name: qwen_usage
+description: 查询 Qwen API (DashScope) 的调用费用和用量统计。包括今日费用、本月累计、
+             每日明细、日均费用和月度预估。当用户询问"API 花了多少钱"、"今天用了多少
+             token"、"Qwen 费用"、"DashScope 用量"、"本月开销"等问题时使用此技能。
+metadata: { "openclaw": { "emoji": "💰", "requires": { "bins": ["python3"] } } }
+---
+
+# Qwen API 用量查询
+
+## 查询用量
+运行：`bash ~/.openclaw/skills/qwen_usage/query_usage.sh`
+
+## 查询指定月份
+运行：`bash ~/.openclaw/skills/qwen_usage/query_usage.sh 2026-01`
+
+## 环境要求
+需要阿里云 RAM AccessKey（非 DashScope API Key），配置在 ~/.openclaw/env：
+- ALIBABA_CLOUD_ACCESS_KEY_ID
+- ALIBABA_CLOUD_ACCESS_KEY_SECRET
+权限：AliyunBSSReadOnlyAccess（只读账单）
+```
+
+**④ 关键设计**
+
+- **产品代码坑**：DashScope 在阿里云计费系统中的 ProductCode **不是** `dashscope`，而是 **`sfm`**（大模型服务平台百炼），用错则返回空结果
+- **逐天查询**：`DescribeInstanceBill` 使用 `Granularity=DAILY` 时**必须指定 `BillingDate`**，因此脚本遍历当月每一天分别查询
+- **instance_id 解析**：每条账单的 `instance_id` 字段格式为 `账户ID;实例ID;模型名;token类型;;序号`，解析后可输出按模型 + token 类型的费用明细
+- **双 Key 体系**：DashScope API Key（`sk-xxx`，调用模型推理）和 阿里云 AccessKey（`LTAI5txxx`，调用管理 API）是完全独立的两套凭证
+- **数据延迟**：账单有约 24 小时延迟，今天的费用明天才出
+
+**⑤ 验证效果**
+
+```bash
+source ~/.openclaw/env && bash ~/.openclaw/skills/qwen_usage/query_usage.sh
+```
+
+输出示例：
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  💰 Qwen API 用量报告 (大模型服务平台百炼)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📅 查询周期: 2026-02
+💰 本月累计费用: ¥8.8000
+
+📈 每日明细:
+  2026-02-01  ¥0.3831
+  2026-02-09  ¥6.8840
+
+🤖 模型费用明细:
+  📌 qwen3-14b    ¥6.1034  (69.4%)   ← 思考 token 占大头
+  📌 qwen-plus    ¥1.6694  (19.0%)
+
+📊 统计:  日均 ¥2.14  本月预估 ¥59.84
+```
+
+**⑥ 文件清单与架构**
+
+```
+~/.openclaw/skills/qwen_usage/
+├── SKILL.md             # Skill 定义（触发条件 + 使用说明）
+├── query_usage.py       # Python 查询脚本（alibabacloud SDK）
+└── query_usage.sh       # 包装脚本（加载 env + 自动安装依赖）
+```
+
+```mermaid
+flowchart LR
+    A["🧑 用户问：API 花了多少钱？"] --> B["🔍 OpenClaw 匹配\nqwen_usage Skill"]
+    B --> C["⚡ exec 调用\nquery_usage.sh"]
+    C --> D["☁️ 阿里云 BSS API\nbusiness.aliyuncs.com"]
+    D --> E["📊 返回费用报告\n按天/按模型明细"]
+
+    style A fill:#e3f2fd,stroke:#1976d2,color:#000
+    style B fill:#fff3e0,stroke:#f57c00,color:#000
+    style C fill:#f3e5f5,stroke:#7b1fa2,color:#000
+    style D fill:#fce4ec,stroke:#c62828,color:#000
+    style E fill:#e8f5e9,stroke:#2e7d32,color:#000
+```
+
+> **要点**：这是第一个 **云 API 查询型** Skill。同样的模式可扩展到：查询其他云服务费用、监控 API 配额等场景。核心踩坑：**ProductCode 是 `sfm` 不是 `dashscope`**。
+
+---
+
 ## 3. 更多 Skill 思路
 
 基于同样的模式，可以继续开发：
@@ -1039,8 +1174,9 @@ sudo systemctl enable bilibili-transcribe
 | `stock_monitor` | 定时推送 | 股票/基金监控 | 行情 API + 飞书推送 |
 | ~~`file_search`~~ → **`nas_search`** | 命令执行 | NAS 文件搜索 | ✅ 已实现（SSH + find） |
 | ~~`video_summary`~~ → **`bilibili_summary`** | API 服务型 | B站视频转写 + 总结 | ✅ 已实现（3060 GPU + whisper + Qwen3-32B） |
+| **`qwen_usage`** | 云 API 查询 | Qwen API 费用监控 | ✅ 已实现（阿里云 BSS OpenAPI + RAM AccessKey） |
 | `docker_manager` | 命令执行 | Docker 管理 | `docker ps` / `docker logs` |
 | `smart_home` | 命令执行 | 智能家居控制 | Home Assistant API |
 | `faq` | 纯数据 | 常见问题解答 | SKILL.md 写入 Q&A |
 
-> **Skill 的精髓**：Markdown 定义触发条件，Shell 脚本实现逻辑（或直接用 Markdown 注入知识），AI 作为中间调度层。**API 服务型 Skill 进一步扩展了这个模式** — 将 GPU 密集型任务（Whisper 语音转写）和 LLM 推理（Qwen3-32B 内容总结）卸载到 3060 GPU 服务器，Surface 只做轻量调度。技术栈：bash + curl + python3 + FastAPI + Docker + systemd。
+> **Skill 的精髓**：Markdown 定义触发条件，Shell 脚本实现逻辑（或直接用 Markdown 注入知识），AI 作为中间调度层。已实现五种 Skill 类型：**命令执行型**（本机/SSH）、**定时推送型**（cron + Webhook）、**纯数据型**（Markdown 知识注入）、**API 服务型**（GPU 推理卸载）、**云 API 查询型**（云厂商 SDK 调用）。技术栈：bash + curl + python3 + FastAPI + Docker + systemd + alibabacloud SDK。

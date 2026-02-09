@@ -66,7 +66,7 @@
 | 2 | [Surface Ubuntu 系统安装](./docs/2_Surface_Ubuntu_Setup.md) | Surface Pro 5 安装 Ubuntu 22.04 + linux-surface 内核 |
 | 3 | [Nginx HTTPS Web UI](./docs/3_OpenClaw_Nginx_WebUI.md) | Nginx 反向代理、自签名 SSL、局域网 Web UI 访问 |
 | 4 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
-| 5 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、5 个实战案例、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
+| 5 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、6 个实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
 | 6 | [踩坑记录与时间线](./docs/6_OpenClaw_Troubleshooting_and_Roadmap.md) | 11 个踩坑案例、最佳实践、部署时间线（22h）、功能路线图 |
 
 ---
