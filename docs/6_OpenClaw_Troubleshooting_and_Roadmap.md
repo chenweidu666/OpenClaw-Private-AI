@@ -16,6 +16,8 @@
   - [坑 7：移动项目目录后 OpenClaw 无法启动](#坑-7移动项目目录后-openclaw-无法启动)
   - [坑 8：Skill 未注册 → AI 自行启动服务 → 对话污染死循环](#坑-8skill-未注册--ai-自行启动服务--端口冲突--对话历史污染死循环)
   - [坑 9：MEMORY.md 踩坑记录反向误导 AI 行为](#坑-9memorymd-踩坑记录反向误导-ai-行为)
+  - [坑 10：watchdog 误杀 — 系统负载飙升触发无限重启](#坑-10watchdog-误杀--系统负载飙升触发无限重启)
+  - [坑 11：cron 脚本无锁 → 进程叠加 → CPU 爆炸](#坑-11cron-脚本无锁--进程叠加--cpu-爆炸)
 - [2. 问题解答](#2-问题解答)
   - [Q1：Workspace 和 Skills 是什么关系？](#q1workspace-和-skills-是什么关系)
 - [3. 最佳实践总结](#3-最佳实践总结)
@@ -240,6 +242,68 @@ ln -s ~/Desktop/4_openclaw/1_OpenClawProject/workspace/memory ~/.openclaw/worksp
 - **记忆文件对 14B 模型的影响比 32B 更大**。14B 上下文理解能力有限，容易被负面案例带偏
 - **建议**：如果使用记忆系统，只保留精简的**正面指引**，把踩坑细节放在开发文档（如本文）中供人类参考
 
+### 坑 10：watchdog 误杀 — 系统负载飙升触发无限重启
+
+**现象**：Surface Pro 每隔 2~20 分钟自动重启，一天重启 15+ 次，形成恶性循环。`last reboot` 输出密密麻麻：
+
+```
+reboot   system boot  Mon Feb  9 22:45 - 23:00  (00:15)
+reboot   system boot  Mon Feb  9 22:24 - 22:44  (00:20)
+reboot   system boot  Mon Feb  9 22:06 - 22:23  (00:17)
+...（一天 15+ 次）
+```
+
+**根本原因**：`watchdog` 服务的负载阈值设得太低，开机时多个服务同时启动导致负载飙升超过阈值，watchdog 强制重启：
+
+```
+watchdog[1016]: loadavg 25 18 9 is higher than the given threshold 24 18 12!
+watchdog[1016]: shutting down the system because of error 253 = 'load average too high'
+```
+
+原始配置 `/etc/watchdog.conf` 中 `max-load-1 = 24`，而 Surface Pro 的 i5-7300U 只有 2 核 4 线程，开机时 OpenClaw Gateway（90% CPU）+ Cursor Server（60% CPU）+ temp_monitor 叠加实例（34% CPU）轻松突破这个阈值。
+
+**恶性循环**：启动 → 负载飙升 → watchdog 触发重启 → 再启动 → 负载再飙 → 再重启...
+
+**解决**：大幅提高 watchdog 负载阈值（温度保护保留）：
+
+```ini
+# /etc/watchdog.conf
+max-load-1 = 80
+max-load-5 = 60
+max-load-15 = 40
+temperature-sensor = /sys/class/thermal/thermal_zone6/temp
+max-temperature = 90   # 温度保护保留
+```
+
+**修复效果**：负载从 25 降至 2.9，系统稳定运行不再被误杀。
+
+> **教训**：在资源有限的设备上部署多个常驻服务时，务必检查 watchdog 负载阈值。Surface Pro 这种无风扇 2 核设备，启动时负载波动极大，默认阈值很容易触发。**温度保护比负载保护更重要**——过热真的会损坏硬件，而高负载只是暂时的。
+
+### 坑 11：cron 脚本无锁 → 进程叠加 → CPU 爆炸
+
+**现象**：`ps aux` 发现 `temp_monitor_feishu.sh` 有 **4+ 个实例**同时运行，每个占 16~19% CPU，叠加后消耗 >60% CPU，是坑 10 负载飙升的主要帮凶。
+
+**原因**：cron 每分钟启动一次脚本（`* * * * *`），但脚本内有耗时操作（CSV 汇总 `tail | awk`），执行时间 >60 秒。上一个实例还没结束，下一个就启动了，不断叠加。
+
+**解决**：在脚本开头加 lockfile 防重叠机制：
+
+```bash
+# 防止重叠运行
+LOCKFILE="/tmp/.temp_monitor.lock"
+if [ -f "$LOCKFILE" ]; then
+    LOCK_PID=$(cat "$LOCKFILE" 2>/dev/null)
+    if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+        exit 0  # 上一个实例还在运行，静默退出
+    fi
+fi
+echo $$ > "$LOCKFILE"
+trap "rm -f $LOCKFILE" EXIT
+```
+
+**修复效果**：同一时刻只有 1 个实例运行，CPU 占用从 >60% 降至 ~19%。
+
+> **教训**：**任何 cron 调度的脚本都应该加锁机制**，尤其是执行时间可能超过调度间隔的脚本。这是 Linux 运维的经典陷阱。推荐方案：lockfile + PID 检查 + `trap` 清理。
+
 ---
 
 ## 2. 问题解答
@@ -307,6 +371,8 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | **AI 异常先查 session.jsonl** | 问题通常不在服务端，而在 `~/.openclaw/agents/main/sessions/` 的对话上下文中 |
 | **MEMORY.md 只写正面指引** | 踩坑细节写开发文档，给 AI 的记忆只保留"正确做法"，避免负面案例误导 14B 模型 |
 | **systemd 服务不要手动启动** | AI 和脚本都应通过 `systemctl restart` 而非 `python3 server.py` 来管理服务 |
+| **cron 脚本必须加锁** | 用 lockfile + PID 检查防止进程叠加，尤其是执行时间可能超过调度间隔的脚本 |
+| **检查 watchdog 阈值** | 无风扇低配设备启动时负载波动大，`max-load-1` 设太低会导致无限重启。温度保护比负载保护更重要 |
 
 ---
 
@@ -340,10 +406,13 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | ✅ | 2026-02-09 21:00 | 更新 Skills 文档：新增"为什么用本地 Whisper"章节、修复 Mermaid 架构图 |
 | ✅ | 2026-02-09 22:00 | 排查 AI 死循环问题（坑 8 + 坑 9）：清除被污染的会话 + 移除 MEMORY.md |
 | ✅ | 2026-02-09 22:55 | **bilibili_summary 端到端验证成功**：飞书发链接 → AI 匹配 Skill → exec 脚本 → 3060 处理 114.6s → 飞书回复总结 |
+| ✅ | 2026-02-09 19:30 | 项目目录整理：OpenClaw 配置仓库迁移至 `4_openclaw/1_OpenClawProject`，修复全部 17 个符号链接 |
+| ✅ | 2026-02-09 19:50 | 恢复 system_info / weather / personal_info 三个自定义 Skill（迁移时丢失） |
+| ✅ | 2026-02-09 23:03 | **修复 Surface 无限重启问题**（坑 10 + 坑 11）：watchdog 阈值调整 + temp_monitor 加锁 |
 
-> 从零到功能完备的 OpenClaw 私人 AI 助手，总计约 **20 小时**（还在持续进化中）。
+> 从零到功能完备的 OpenClaw 私人 AI 助手，总计约 **22 小时**（还在持续进化中）。
 >
-> **2/9 回顾**：完成了 bilibili_summary — 第一个 API 服务型 Skill，实现三机协同（Surface + 3060 GPU + NAS）的分布式架构。过程中踩了多个坑（NAS 传输、端口冲突、Qwen3 API、对话历史污染），均已解决并记录。最终端到端验证成功：飞书发送B站链接 → AI 自动匹配 Skill → 执行脚本 → 3060 完成下载+转写+总结 → AI 回复飞书用户。
+> **2/9 回顾**：完成了 bilibili_summary — 第一个 API 服务型 Skill，实现三机协同（Surface + 3060 GPU + NAS）的分布式架构。过程中踩了多个坑（NAS 传输、端口冲突、Qwen3 API、对话历史污染），均已解决并记录。最终端到端验证成功：飞书发送B站链接 → AI 自动匹配 Skill → 执行脚本 → 3060 完成下载+转写+总结 → AI 回复飞书用户。晚间还修复了 Surface Pro 因 watchdog + cron 脚本叠加导致的无限重启问题（坑 10 + 坑 11），系统负载从 25 降至 2.9，恢复稳定。
 
 ---
 

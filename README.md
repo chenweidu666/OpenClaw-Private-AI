@@ -17,7 +17,7 @@
 - **B站视频一键总结**：发一个链接 → 自动下载 → Whisper GPU 转写 → Qwen3-32B 总结 → NAS 存档，全流程 ~100 秒
 - **零成本语音转写**：利用闲置 3060 GPU 运行 faster-whisper，无需云端 ASR 付费，音视频数据不出局域网
 - **飞书原生集成**：通过飞书对话即可操控 AI 助手，支持工具调用、文件搜索、视频总结等
-- **完整踩坑记录**：9 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
+- **完整踩坑记录**：11 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
 
 ---
 
@@ -67,7 +67,7 @@
 | 3 | [Nginx HTTPS Web UI](./docs/3_OpenClaw_Nginx_WebUI.md) | Nginx 反向代理、自签名 SSL、局域网 Web UI 访问 |
 | 4 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
 | 5 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、5 个实战案例、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
-| 6 | [踩坑记录与时间线](./docs/6_OpenClaw_Troubleshooting_and_Roadmap.md) | 9 个踩坑案例、最佳实践、部署时间线（19h）、功能路线图 |
+| 6 | [踩坑记录与时间线](./docs/6_OpenClaw_Troubleshooting_and_Roadmap.md) | 11 个踩坑案例、最佳实践、部署时间线（22h）、功能路线图 |
 
 ---
 
