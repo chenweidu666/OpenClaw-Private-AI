@@ -18,6 +18,7 @@
   - [坑 9：MEMORY.md 踩坑记录反向误导 AI 行为](#坑-9memorymd-踩坑记录反向误导-ai-行为)
   - [坑 10：watchdog 误杀 — 系统负载飙升触发无限重启](#坑-10watchdog-误杀--系统负载飙升触发无限重启)
   - [坑 11：cron 脚本无锁 → 进程叠加 → CPU 爆炸](#坑-11cron-脚本无锁--进程叠加--cpu-爆炸)
+  - [坑 12：nativeSkills 导致 14B 模型 Skill 调用失败](#坑-12nativeskills-导致-14b-模型-skill-调用失败)
 - [2. 问题解答](#2-问题解答)
   - [Q1：Workspace 和 Skills 是什么关系？](#q1workspace-和-skills-是什么关系)
 - [3. 最佳实践总结](#3-最佳实践总结)
@@ -304,6 +305,52 @@ trap "rm -f $LOCKFILE" EXIT
 
 > **教训**：**任何 cron 调度的脚本都应该加锁机制**，尤其是执行时间可能超过调度间隔的脚本。这是 Linux 运维的经典陷阱。推荐方案：lockfile + PID 检查 + `trap` 清理。
 
+### 坑 12：nativeSkills 导致 14B 模型 Skill 调用失败
+
+**现象**：用户在飞书问"看一下温度"或"你是什么硬件配置"，AI 回复"当前无法直接获取温度信息，您可以手动执行 `sudo sensors`..."，完全不触发 `system_info` Skill。同样的问题在 32B 模型上正常。
+
+**日志证据**：
+
+```
+19:19:25 tool start: tool=system_info   # ① native tool 被调用（返回 SKILL.md 原文）
+19:19:25 tool end:   tool=system_info
+19:19:34 tool start: tool=exec          # ② 14B 有时会调用 exec（10s 执行了脚本）
+19:19:44 tool end:   tool=exec
+19:20:17 tool start: tool=system_info   # ③ 但随后又调用了一次 native tool
+19:20:17 tool end:   tool=system_info
+19:20:27 deliver: "当前无法直接获取温度信息..."  # ④ 最终没有使用 exec 的输出
+```
+
+**根本原因**：`commands.nativeSkills: "auto"` 将每个 Skill 同时注册为**同名原生工具**（如 `system_info` 工具）。调用这个原生工具只返回 SKILL.md 的原始文本，而不是执行脚本。14B 模型的行为模式：
+
+1. 匹配到 `system_info` Skill → 调用同名原生工具 → 拿到 SKILL.md 文本
+2. 有时会接着调用 `exec` 执行脚本 → 拿到真实系统信息
+3. 但**不会使用 exec 的输出**，反而再次调用原生工具
+4. 最终给出"无法获取，请手动执行"的泛泛回答
+
+**对比**：
+
+| 行为 | 14B + nativeSkills=auto | 32B + nativeSkills=auto | 14B + nativeSkills=false |
+|------|------------------------|------------------------|--------------------------|
+| 调用原生 `system_info` 工具 | ✅ 调用但返回 SKILL.md 文本 | ✅ 调用但能正确理解 | ❌ 工具不存在 |
+| 调用 `exec` 执行脚本 | 🔀 不稳定，有时调有时不调 | ✅ 正确调用 | ✅ 只能通过 exec |
+| 使用脚本输出回复用户 | ❌ 即使 exec 成功也不用输出 | ✅ 正确使用 | ✅ 正确使用 |
+| 最终效果 | ❌ "请手动执行命令" | ✅ 正确返回系统信息 | ✅ 正确返回系统信息 |
+
+**解决**：关闭 nativeSkills，强制所有 Skill 只通过 `exec` 执行：
+
+```bash
+openclaw config set commands.nativeSkills false
+nohup openclaw gateway --force > /tmp/openclaw_restart.log 2>&1 &
+```
+
+关闭后 Skill 不再注册为同名工具，AI 只能通过读取 SKILL.md 中的指令然后调用 `exec` 执行脚本，消除了混乱。
+
+> **教训**：
+> - **`nativeSkills: "auto"` 对 14B 模型有害**。14B 无法区分"读取 SKILL.md"和"执行脚本"两个动作，两者混用导致结果丢失
+> - **小模型用 `nativeSkills: false`，大模型可用 `"auto"`**。32B 能正确理解两层工具调用的关系
+> - **排查 Skill 不触发时，先看日志中 `tool start/end` 的序列**，确认是 native tool 被调用还是 exec 被调用
+
 ---
 
 ## 2. 问题解答
@@ -373,6 +420,7 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | **systemd 服务不要手动启动** | AI 和脚本都应通过 `systemctl restart` 而非 `python3 server.py` 来管理服务 |
 | **cron 脚本必须加锁** | 用 lockfile + PID 检查防止进程叠加，尤其是执行时间可能超过调度间隔的脚本 |
 | **检查 watchdog 阈值** | 无风扇低配设备启动时负载波动大，`max-load-1` 设太低会导致无限重启。温度保护比负载保护更重要 |
+| **14B 关 nativeSkills** | `commands.nativeSkills: false`，防止 Skill 注册为同名工具导致 14B 混乱。32B 可用 `"auto"` |
 
 ---
 
@@ -409,10 +457,14 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | ✅ | 2026-02-09 19:30 | 项目目录整理：OpenClaw 配置仓库迁移至 `4_openclaw/1_OpenClawProject`，修复全部 17 个符号链接 |
 | ✅ | 2026-02-09 19:50 | 恢复 system_info / weather / personal_info 三个自定义 Skill（迁移时丢失） |
 | ✅ | 2026-02-09 23:03 | **修复 Surface 无限重启问题**（坑 10 + 坑 11）：watchdog 阈值调整 + temp_monitor 加锁 |
+| ✅ | 2026-02-10 03:20 | 开发 qwen_usage Skill → 独立为 `1_monitor/scripts/qwen_billing/` 脚本（解耦 OpenClaw） |
+| ✅ | 2026-02-10 03:23 | 发现并修复 **nativeSkills 导致 14B Skill 失效**（坑 12）：`nativeSkills: false` |
 
-> 从零到功能完备的 OpenClaw 私人 AI 助手，总计约 **22 小时**（还在持续进化中）。
+> 从零到功能完备的 OpenClaw 私人 AI 助手，总计约 **24 小时**（还在持续进化中）。
 >
 > **2/9 回顾**：完成了 bilibili_summary — 第一个 API 服务型 Skill，实现三机协同（Surface + 3060 GPU + NAS）的分布式架构。过程中踩了多个坑（NAS 传输、端口冲突、Qwen3 API、对话历史污染），均已解决并记录。最终端到端验证成功：飞书发送B站链接 → AI 自动匹配 Skill → 执行脚本 → 3060 完成下载+转写+总结 → AI 回复飞书用户。晚间还修复了 Surface Pro 因 watchdog + cron 脚本叠加导致的无限重启问题（坑 10 + 坑 11），系统负载从 25 降至 2.9，恢复稳定。
+>
+> **2/10 回顾**：经历了 qwen_usage Skill 开发全过程（阿里云 BSS OpenAPI 账单查询），最终将其从 OpenClaw 解耦为独立脚本。更重要的是发现并修复了**坑 12：nativeSkills 导致 14B 模型所有 Skill 调用失效**——关闭 `nativeSkills` 后 5 个 Skill 恢复正常。
 
 ---
 
