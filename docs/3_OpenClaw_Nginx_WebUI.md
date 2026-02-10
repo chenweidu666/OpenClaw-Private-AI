@@ -82,7 +82,7 @@ server {
 }
 ```
 
-> **关键点**：`/ws` location 必须将 token 拼接到 `proxy_pass` URL 中，否则 WebSocket 连接会因缺少认证而失败。详见 [踩坑记录](./6_OpenClaw_Troubleshooting_and_Roadmap.md)。
+> **关键点**：`/ws` location 必须将 token 拼接到 `proxy_pass` URL 中，否则 WebSocket 连接会因缺少认证而失败。详见 [踩坑记录](../README.md#坑-3nginx-websocket-要注入-token)。
 
 启用并重启：
 

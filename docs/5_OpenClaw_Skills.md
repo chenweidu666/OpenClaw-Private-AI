@@ -14,12 +14,12 @@
   - [1.3 开发流程](#13-开发流程)
 - [2. 实战案例与总览](#2-实战案例与总览)
   - [2.1 Skill 总览](#21-skill-总览)
-  - [2.2 system_info Skill](#22-system_info-skill)
-  - [2.3 weather Skill](#23-weather-skill)
-  - [2.4 personal_info Skill](#24-personal_info-skill)
-  - [2.5 nas_search Skill](#25-nas_search-skill)
-  - [2.6 bilibili_summary Skill](#26-bilibili_summary-skill)
-  - [2.7 qwen_usage Skill](#27-qwen_usage-skill)
+  - [~~2.2 system_info Skill~~](#22-system_info-skill)（已迁移为插件原生工具 `cw_system_info`）
+  - [~~2.3 weather Skill~~](#23-weather-skill)（已解耦到 `1_monitor/scripts/weather/` + 插件 `cw_weather`）
+  - [~~2.4 personal_info Skill~~](#24-personal_info-skill)（已迁移为插件原生工具 `cw_personal_info`）
+  - [~~2.5 nas_search Skill~~](#25-nas_search-skill)（已迁移为插件原生工具 `cw_nas_search`）
+  - [~~2.6 bilibili_summary Skill~~](#26-bilibili_summary-skill)（已迁移为插件原生工具 `cw_bilibili_summary`）
+  - [~~2.7 qwen_usage Skill~~](#27-qwen_usage-skill)（已解耦为独立脚本 `1_monitor/scripts/qwen_billing/`）
 - [3. 更多 Skill 思路](#3-更多-skill-思路)
 
 ---
@@ -29,6 +29,8 @@
 ### 1.1 什么是 Skill
 
 **Skill 系统是 OpenClaw 的杀手级特性。** 一个 Markdown 文件 + 一个 Shell 脚本，就能给 AI 增加一种全新能力——不需要改一行 OpenClaw 源码。
+
+> **📌 重要更新**：本项目的 5 个 Skill 已通过**自定义插件**注册为**原生 function calling 工具**（`cw_*`），不再依赖系统提示上下文。Skill 脚本本身不变，插件作为调用入口包装它们。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
 
 每个 Skill 一个子目录，存放在 `~/.openclaw/skills/` 下：
 
@@ -101,7 +103,7 @@ metadata: { "openclaw": { "emoji": "🔧", "requires": { "bins": ["bash"] } } }
 | # | Skill | 类型 | AI 交互 | 定时推送 |
 |---|-------|------|---------|----------|
 | 1 | **system_info** 🖥️ | 命令执行型 | exec 调用脚本 | — |
-| 2 | **weather** 🌤️ | 命令执行 + 定时推送 | exec 调用脚本 | 每 2 小时 → 飞书 |
+| 2 | **weather** 🌤️ | CSV 读取型（已解耦） | cw_weather 读 CSV | 独立 cron 采集 + 飞书推送 |
 | 3 | **personal_info** 👤 | 纯数据型 | 直接引用 SKILL.md | — |
 | 4 | **nas_search** 🗄️ | 命令执行型 | exec 调用脚本 | — |
 | 5 | **bilibili_summary** 📺 | API 服务型 | HTTP 调用 3060 GPU 服务 (whisper + Qwen3-32B) | AI 对话回复 |
@@ -134,7 +136,9 @@ metadata: { "openclaw": { "emoji": "🔧", "requires": { "bins": ["bash"] } } }
     └── query_usage.sh         # 包装脚本 (加载 env + 自动安装依赖)
 ```
 
-### 2.2 system_info Skill
+### ~~2.2 system_info Skill~~（已迁移为插件原生工具 `cw_system_info`）
+
+> **⚠️ 已废弃**：此 Skill 的调用方式已从 `read SKILL.md → exec` 迁移为**原生 function calling**（`cw_system_info`），脚本本身不变。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
 
 **① 目标**
 
@@ -221,78 +225,91 @@ AI **真的执行了系统命令**，返回了品牌型号、CPU、内存、磁�
 
 ---
 
-### 2.3 weather Skill
+### ~~2.3 weather Skill~~（已解耦到 `1_monitor/scripts/weather/` + 插件 `cw_weather`）
 
-**① 目标与方案选型**
+> **⚠️ 已废弃**：天气功能已从 OpenClaw Skill 完全解耦。采集/推送迁移到 `1_monitor/scripts/weather/`，AI 通过插件原生工具 `cw_weather` 读取 CSV 缓存数据，毫秒级响应。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
 
-**目标**：AI 能查天气 + 每 2 小时自动推送到飞书 + 自动获取服务器位置。
+**① 数据源**
 
-| API | 优点 | 缺点 | 费用 |
-|-----|------|------|------|
-| **wttr.in** | 无需 API Key，支持中文，curl 直接调用 | 数据精度一般 | 免费 |
-| 和风天气 | 中国城市数据好 | 需注册 API Key | 免费额度有限 |
-| OpenWeatherMap | 全球覆盖 | 中文支持弱，需注册 | 免费额度有限 |
+数据源仍为 **[wttr.in](https://wttr.in)** — 零配置、免费、`curl` 一行就能用。
 
-最终选择 **[wttr.in](https://wttr.in)** — 零配置、免费、`curl` 一行就能用。
+**② 新架构：采集-存储-读取分离**
 
-**② IP 定位获取城市**
+```mermaid
+flowchart LR
+    API["🌐 wttr.in\nAPI"]
 
-服务器没有 GPS 硬件，通过 IP 地址反查位置：
+    subgraph collect ["⏰ Cron 定时采集"]
+        direction TB
+        C1["🕐 每 2 小时\ncron 触发"]
+        C2["📜 weather_collect.sh\ncurl + python3 解析"]
+        C3["💾 weather_data.csv\n追加一行"]
+        C1 --> C2 --> C3
+    end
+
+    subgraph push ["📨 飞书推送"]
+        direction TB
+        P1["🕐 采集后 5 分钟"]
+        P2["📜 weather_feishu_push.sh\n读 CSV 最新行"]
+        P3["📨 飞书 Webhook"]
+        P1 --> P2 --> P3
+    end
+
+    subgraph ai ["🤖 AI 查询"]
+        direction TB
+        A1["🧑 用户问天气"]
+        A2["🔧 cw_weather 插件\nfunction call"]
+        A3["📜 weather_read.sh\n读 CSV 最新行"]
+        A4["📊 秒回天气数据"]
+        A1 --> A2 --> A3 --> A4
+    end
+
+    C2 -. "curl" .-> API
+    P2 -. "读取" .-> C3
+    A3 -. "读取" .-> C3
+
+    style collect fill:#e8f5e9,stroke:#2e7d32,color:#000
+    style push fill:#fff3e0,stroke:#f57c00,color:#000
+    style ai fill:#e3f2fd,stroke:#1976d2,color:#000
+    style API fill:#fce4ec,stroke:#c62828,color:#000
+```
+
+**③ 文件清单**
+
+```
+1_monitor/scripts/weather/
+├── weather_collect.sh      # Cron 采集脚本（查询 wttr.in → 写入 CSV）
+├── weather_feishu_push.sh  # 飞书推送（读 CSV → 推送卡片）
+├── weather_read.sh         # AI 读取入口（读 CSV / 实时查询兜底）
+├── weather_data.csv        # 天气数据（自动生成，保留 30 天）
+├── weather_collect.log     # 采集日志
+└── weather_push.log        # 推送日志
+```
+
+**④ CSV 数据格式**
+
+```csv
+timestamp,city,region,desc,temp_c,feels_c,humidity,wind_speed_kmh,wind_dir,pressure,visibility,uv_index,advice,forecast
+2026-02-10 14:42:27,Nanjing,Jiangsu,阴天,8,5,61,18,W,1021,10,2,较冷 棉衣或薄羽绒服,"2026-02-10 3~11C rain:76% [...] ; 2026-02-11 4~13C rain:0% [...] ; ..."
+```
+
+**⑤ Cron 配置**
 
 ```bash
-curl -s http://ip-api.com/json/?lang=zh-CN
-# {"city":"某城市","lat":xx.xxxx,"lon":xxx.xxxx,...}
+# 天气数据采集 - 每2小时整点
+0 */2 * * * /bin/bash ~/Desktop/1_monitor/scripts/weather/weather_collect.sh
+
+# 天气飞书推送 - 采集后5分钟
+5 */2 * * * /bin/bash ~/Desktop/1_monitor/scripts/weather/weather_feishu_push.sh
 ```
 
-定位结果：**某城市，某省**（GPS: xx.xxxx, xxx.xxxx），城市级精度对天气查询够用。
+**⑥ OpenClaw 插件调用**
 
-**③ 创建目录与脚本**
+`cw_weather` 插件调用 `weather_read.sh`，行为：
+- **默认城市（南京）**：直接读 CSV 最新行，毫秒级响应，不消耗 API
+- **其他城市**：实时查询 wttr.in 兜底
 
-```bash
-mkdir -p ~/.openclaw/skills/weather
-```
-
-**get_weather.sh** — AI 通过 `exec` 调用的查询脚本：
-
-```bash
-#!/bin/bash
-CITY="${1:-YourCity}"
-DATA=$(curl -s "https://wttr.in/${CITY}?format=j1&lang=zh")
-# python3 解析 JSON，输出当前天气 + 3 天预报 + 逐时预报
-```
-
-输出示例：
-
-```
-━━━━━━━━━━━━━━━━━━
-  🌍 YourCity, YourProvince
-  📍 GPS: 32.062, 118.778
-━━━━━━━━━━━━━━━━━━
-
-🌡️ 当前天气: 晴朗
-  温度: -2°C (体感 -5°C)
-  湿度: 63%  风速: 8 km/h (SE)
-
-📅 今天 (2026-02-09)  -1°C ~ 8°C
-    09:00  阴天  2°C
-    15:00  零星小雨  8°C 🌧️64%
-
-📅 明天 (2026-02-10)  2°C ~ 9°C
-    ...
-```
-
-支持查询其他城市：`bash get_weather.sh Shanghai`
-
-**④ 飞书定时推送**
-
-**weather_feishu_push.sh** — 通过飞书 Webhook 推送，内容包含：
-
-- 当前天气、温度、体感温度、湿度、风速
-- 今日和明日温度范围 + 未来 4 个时段逐时预报
-- 穿衣建议（根据温度自动生成）
-- 降水提醒（概率 >50% 时提醒带伞）
-
-**穿衣建议逻辑**：
+**穿衣建议逻辑**（内嵌于采集脚本）：
 
 | 温度 | 建议 |
 |------|------|
@@ -302,74 +319,20 @@ DATA=$(curl -s "https://wttr.in/${CITY}?format=j1&lang=zh")
 | 21~30°C | 舒适，T恤或薄长袖 |
 | >30°C | 炎热，防暑降温 |
 
-**Cron 配置**（每 2 小时整点推送）：
+**⑦ 为什么解耦**
 
-```bash
-0 */2 * * * /bin/bash /home/youruser/.openclaw/skills/weather/weather_feishu_push.sh
-```
-
-**⑤ 编写 SKILL.md**
-
-```markdown
----
-name: weather
-description: 查询天气信息，包括当前天气、温度、湿度、风速、未来3天预报、逐时预报。
-             当用户询问天气、温度、是否下雨、穿什么衣服、需不需要带伞等问题时使用。
-metadata: { "openclaw": { "emoji": "🌤️", "requires": { "bins": ["bash", "curl", "python3"] } } }
----
-
-# 天气查询
-
-## 默认城市
-某城市 (MyCity)，基于服务器 IP 自动定位
-
-## 查询天气
-运行：`bash ~/.openclaw/skills/weather/get_weather.sh`
-查询其他城市：`bash ~/.openclaw/skills/weather/get_weather.sh Shanghai`
-```
-
-**⑥ 文件清单与架构**
-
-```
-~/.openclaw/skills/weather/
-├── SKILL.md                  # Skill 定义（触发条件）
-├── get_weather.sh            # 天气查询脚本（AI 调用）
-├── weather_feishu_push.sh    # 飞书定时推送脚本（cron 调用）
-└── weather_push.log          # 推送日志
-```
-
-```mermaid
-flowchart LR
-    API["🌐 wttr.in\nAPI"]
-
-    subgraph ai ["🤖 AI 交互查询"]
-        direction TB
-        A1["🧑 用户问：今天天气？"]
-        A2["🔍 OpenClaw 匹配\nweather Skill"]
-        A3["⚡ exec 调用\nget_weather.sh"]
-        A4["📊 返回 3 天预报\n给用户"]
-        A1 --> A2 --> A3 --> A4
-    end
-
-    subgraph cron ["⏰ Cron 定时推送"]
-        direction TB
-        B1["🕐 每 2 小时\ncron 触发"]
-        B2["📜 执行\nweather_feishu_push.sh"]
-        B3["📨 飞书 Webhook\n推送消息"]
-        B1 --> B2 --> B3
-    end
-
-    A3 -. "curl" .-> API
-    B2 -. "curl" .-> API
-
-    style ai fill:#e3f2fd,stroke:#1976d2,color:#000
-    style cron fill:#fff3e0,stroke:#f57c00,color:#000
-    style API fill:#e8f5e9,stroke:#2e7d32,color:#000
-```
+| 原来（OpenClaw Skill） | 现在（独立脚本 + CSV） |
+|------------------------|----------------------|
+| 每次问天气都实时 curl wttr.in | cron 定时采集，AI 读 CSV 秒回 |
+| 响应慢（网络延迟 3~15s） | 毫秒级（读本地文件） |
+| 占用 OpenClaw 资源（AI 上下文 + API 调用） | 完全独立，OpenClaw 只读 CSV |
+| 如果网络抖动就超时 | 数据已缓存，网络故障不影响查询 |
 
 ---
 
-### 2.4 personal_info Skill
+### ~~2.4 personal_info Skill~~（已迁移为插件原生工具 `cw_personal_info`）
+
+> **⚠️ 已废弃**：此 Skill 已迁移为原生 function calling 工具（`cw_personal_info`），插件直接读取 SKILL.md 返回内容。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
 
 **① 目标与思路**
 
@@ -445,7 +408,9 @@ metadata: { "openclaw": { "emoji": "👤", "requires": { "bins": [] } } }
 
 ---
 
-### 2.5 nas_search Skill
+### ~~2.5 nas_search Skill~~（已迁移为插件原生工具 `cw_nas_search`）
+
+> **⚠️ 已废弃**：此 Skill 已迁移为原生 function calling 工具（`cw_nas_search`），9 种操作通过 JSON Schema `action` 参数结构化调用。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
 
 **① 目标与思路**
 
@@ -590,7 +555,9 @@ flowchart LR
 
 ---
 
-### 2.6 bilibili_summary Skill
+### ~~2.6 bilibili_summary Skill~~（已迁移为插件原生工具 `cw_bilibili_summary`）
+
+> **⚠️ 已废弃**：此 Skill 已迁移为原生 function calling 工具（`cw_bilibili_summary`），模型直接传入 URL 参数调用。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
 
 **① 目标与定位**
 
@@ -1036,7 +1003,9 @@ sudo systemctl enable bilibili-transcribe
 
 ---
 
-### 2.7 qwen_usage Skill
+### ~~2.7 qwen_usage Skill~~（已解耦为独立脚本 `1_monitor/scripts/qwen_billing/`）
+
+> **⚠️ 已废弃**：此 Skill 已从 OpenClaw 解耦为独立的计费查询脚本，不再作为 AI Skill 使用。
 
 **① 目标与思路**
 

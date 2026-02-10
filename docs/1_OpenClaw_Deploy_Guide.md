@@ -270,5 +270,5 @@ OpenClaw 自带 **Control UI**（Web 聊天界面），默认监听 `127.0.0.1:1
 >
 > - [Workspace 自定义指南](./4_OpenClaw_Workspace.md) — 定义 AI 人格、身份和能力
 > - [Skill 开发指南](./5_OpenClaw_Skills.md) — 给 AI 增加自定义能力
-> - [踩坑记录与时间线](./6_OpenClaw_Troubleshooting_and_Roadmap.md) — 常见问题和部署经验
+> - [踩坑记录与时间线](../README.md#踩坑记录) — 常见问题和部署经验
 > - 返回 [项目总览](../README.md)
