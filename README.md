@@ -19,7 +19,7 @@
 - **NAS SMB 直挂**：三台机器统一挂载 NAS 到 `/mnt/nas/`，文件直接读写，无需 SCP/dd 传输
 - **飞书原生集成**：通过飞书对话即可操控 AI 助手，支持工具调用、文件搜索、视频总结等
 - **原生 Function Calling 插件**：通过自定义插件将 Skill 注册为原生工具，不依赖上下文，100% 确定性调用
-- **完整踩坑记录**：15 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
+- **完整踩坑记录**：16 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
 - **硬件性能实测**：Surface Pro / 3060 工作站 / NAS 三机 CPU、内存、磁盘、Node.js 基准测试对比
 
 ---
@@ -118,7 +118,7 @@ sequenceDiagram
 | 4 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
 | 5 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
 | 6 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、5 个工具实战、踩坑总结 |
-| — | **踩坑记录与时间线** | 15 个踩坑案例、最佳实践、部署时间线（29h）、功能路线图（见本文下方） |
+| — | **踩坑记录与时间线** | 16 个踩坑案例、最佳实践、部署时间线（29h）、功能路线图（见本文下方） |
 
 ---
 
@@ -730,6 +730,41 @@ async execute(_id: string, params: { url: string; lang?: string }) {
 > - 长时间运行的工具必须用异步 `exec` + `maxBuffer`（默认 1MB 不够大，转写文本可达数 MB）
 > - 同步执行（`runScript` / `execSync`）保留给 < 60s 的短命令即可
 
+### 坑 16：SSH 串联 NAS 经常断连 → 改用 SMB 挂载
+
+**现象**：早期架构中，Surface Pro 和 3060 工作站通过 SSH 访问 NAS 上的文件（`ssh nas 'cat /path/file'`、`cat file | ssh nas 'dd of=...'`）。但在实际运行中，SSH 连接**频繁出现以下问题**：
+
+| 问题 | 表现 |
+|------|------|
+| SSH 连接超时 | `ssh: connect to host nas port 22: Connection timed out` |
+| 管道中断 | `cat | ssh dd` 传输到一半断开，文件写入不完整（0 字节或截断） |
+| NAS SSH 兼容性差 | 绿联 NAS 使用 BusyBox 精简 shell，`scp`/`rsync` 不兼容 UTF-8 中文路径 |
+| 并发冲突 | 多个脚本同时 SSH 到 NAS 时偶发 `Connection reset by peer` |
+| 性能瓶颈 | 每次文件操作都要建立 SSH 连接（握手 ~200ms），小文件批量读取极慢 |
+
+这些问题在 bilibili_summary 场景尤为严重——3060 转写完后需要传输 5 个文件到 NAS（video.mp4 + audio.wav + transcript.txt + transcript.srt + ai_summary.txt），任何一个失败都会导致数据丢失。
+
+**根本原因**：绿联 NAS（DH4300+）的 SSH 服务是轻量级实现（BusyBox），不是完整的 OpenSSH，连接稳定性和功能完整性都不如标准 Linux 服务器。
+
+**解决方案**：将 NAS 通过 **SMB 3.0 协议挂载**到 Surface Pro 和 3060 工作站的 `/mnt/nas/`，文件操作变成本地目录读写：
+
+| 维度 | SSH 方式 | SMB 挂载方式 |
+|------|---------|-------------|
+| 读文件 | `ssh nas 'cat /path/file'` | `cat /mnt/nas/path/file` |
+| 写文件 | `cat file \| ssh nas 'dd of=...'` | `cp file /mnt/nas/path/` |
+| 连接建立 | 每次操作建立 SSH 连接（~200ms） | 开机自动挂载，始终可用 |
+| 中文路径 | 不兼容（SCP/rsync 报错） | 完全兼容 |
+| 可靠性 | 受 BusyBox SSH 限制，偶发断连 | SMB 3.0 协议稳定，内核级实现 |
+| 性能 | 单文件尚可，批量慢 | 接近本地磁盘速度 |
+
+**配置方式**：在 `/etc/fstab` 中添加 CIFS 挂载项，使用 `_netdev,nofail` 参数确保网络就绪后挂载且失败不阻塞开机。
+
+> **教训**：
+> - 家用 NAS 的 SSH 服务不可信赖，尤其是 ARM 方案 NAS（如绿联、群晖入门款），BusyBox shell 兼容性有限
+> - **SMB 挂载是连接 NAS 的最佳方式**——内核级实现、协议成熟、中文路径兼容、开机自动可用
+> - `cw_nas_search` 仍保留 SSH 方式做深度搜索（`find`/`du` 命令在 NAS 本地执行更快），但文件读写一律走 SMB
+> - 统一挂载路径（`/mnt/nas/`）写入 TOOLS.md，让 AI 也知道正确的访问方式
+
 ---
 
 ## 问题解答
@@ -810,6 +845,7 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | **NAS 简单访问不用工具** | 文件路径明确时直接 `exec`/`read` 访问 `/mnt/nas/`，只有深度搜索才用 `cw_nas_search` |
 | **转写与总结解耦** | GPU 节点只做 Whisper 转写（擅长的事），AI 总结交给云端 Qwen API，各司其职 |
 | **产出文件直写 NAS** | 3060 和 Surface 统一 SMB 挂载 `/mnt/nas/`，不再用 SSH+dd 传输，减少出错点 |
+| **NAS 用 SMB 挂载不用 SSH** | 家用 NAS（绿联/BusyBox）的 SSH 不稳定，SMB 3.0 挂载内核级实现更可靠，中文路径兼容 |
 | **Gateway restart 要先 stop** | `systemctl --user restart` 有时杀不干净旧进程，导致端口占用无限重启。稳妥做法：先 `stop` → 确认进程已退出 → 再 `start` |
 
 ---
