@@ -838,6 +838,7 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | ✅ | 2026-02-10 16:00 | **NAS 路径优化**：TOOLS.md 添加 NAS SMB 挂载映射表，`cw_nas_search` 重新定位为"深度搜索"工具 |
 | ✅ | 2026-02-10 16:20 | **bilibili_summary v6 架构重构**：3060 只做下载+转写（存 NAS），AI 总结改用 OpenClaw Qwen API（云端） |
 | ✅ | 2026-02-10 16:20 | 3060 `server.py` v2.0 已移除 Qwen3-32B 本地总结，全部产出直接 SMB 写入 NAS |
+| ❌ | 2026-02-10 16:45 | **bilibili 纯 API 备用链路调研后放弃**：DashScope Paraformer 不支持本地文件，需 OSS 中转，链路复杂且额外付费，3060 方案已满足需求 |
 
 > 从零到功能完备的 OpenClaw 私人 AI 助手，总计约 **29 小时**（还在持续进化中）。
 >
@@ -863,6 +864,7 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | ✅ | bilibili_summary Skill | B站视频：3060 下载到 NAS → Whisper GPU 转写 → OpenClaw Qwen API 总结 |
 | ✅ | **原生 Function Calling 插件** | 6 个 Skill 注册为 `cw_*` 原生工具，不依赖上下文，100% 确定性调用 |
 | ⏳ | 小爱音箱语音交互 | Mi-GPT 已部署，等待小米账号安全验证生效 |
+| ❌ | bilibili 纯 API 备用链路 | 调研后放弃：DashScope Paraformer 不支持本地文件直传，需开通 OSS 中转，链路复杂收益低，3060 方案已足够 |
 | 📋 | 更多 Skill | 日程管理、Docker 管理、智能家居 |
 | 📋 | Heartbeat 定时任务 | AI 主动推送日历提醒 |
 | 📋 | MCP Server 集成 | 通过 Model Context Protocol 接入外部工具 |
