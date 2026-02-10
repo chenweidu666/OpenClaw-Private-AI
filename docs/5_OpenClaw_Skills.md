@@ -485,7 +485,7 @@ mkdir -p ~/.openclaw/skills/nas_search
 ```bash
 #!/bin/bash
 # NAS 文件检索脚本 — OpenClaw Skill
-# 通过 SSH 远程搜索 Synology NAS 上的文件
+# 通过 SSH 远程搜索绿联 NAS (DH4300 Plus) 上的文件
 
 NAS_HOST="nas"
 MAX_RESULTS=50
@@ -521,7 +521,7 @@ nas_exec() {
 ```markdown
 ---
 name: nas_search
-description: 搜索和浏览 NAS (Synology) 上的文件。支持按文件名搜索、按文件类型搜索、
+description: 搜索和浏览 NAS (绿联 UGREEN DH4300 Plus) 上的文件。支持按文件名搜索、按文件类型搜索、
              列出目录内容、查看磁盘占用、查看最近修改的文件、查看电影库、查看照片目录。
              当用户询问 NAS 上有什么文件、找某个文件在哪、NAS 存储空间、电影列表、
              照片目录、最近下载了什么、NAS 磁盘容量、查找文件等问题时使用此技能。
