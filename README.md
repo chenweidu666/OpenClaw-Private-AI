@@ -151,42 +151,26 @@ openclaw agent --agent main --message "你好"
 
 ### NAS SMB 挂载
 
-NAS（IP 192.168.31.10）通过 SMB 3.0 协议挂载到 Surface Pro 和 3060 工作站，三台机器路径统一为 `/mnt/nas/`，文件可直接读写，无需 SCP/dd 传输。
+NAS 通过 SMB 3.0 协议挂载到 Surface Pro 和 3060 工作站，两台机器统一挂载到 `/mnt/nas/` 路径下，文件可直接读写，无需 SCP/dd 传输。
 
-| 本地挂载路径 | NAS 共享名 | 说明 |
-|-------------|-----------|------|
-| `/mnt/nas/personal` | personal_folder | 个人文件（项目、文档、代码、视频转写存档） |
-| `/mnt/nas/movies` | Movies | 电影库 |
-| `/mnt/nas/photos` | Photos | 照片 |
-| `/mnt/nas/musics` | Musics | 音乐 |
-| `/mnt/nas/games` | Games | 游戏 |
-| `/mnt/nas/downloads` | 迅雷下载 | 下载目录 |
-| `/mnt/nas/docker` | docker | Docker 数据 |
+| 本地挂载路径 | 用途 |
+|-------------|------|
+| `/mnt/nas/personal` | 个人文件（项目、文档、代码、视频转写存档） |
+| `/mnt/nas/movies` | 电影库 |
+| `/mnt/nas/photos` | 照片 |
+| `/mnt/nas/musics` | 音乐 |
+| `/mnt/nas/games` | 游戏 |
+| `/mnt/nas/downloads` | 下载目录 |
+| `/mnt/nas/docker` | Docker 数据 |
 
-**挂载配置**（两台机器 `/etc/fstab` 相同）：
+**挂载方式**：通过 `/etc/fstab` 配置 CIFS 自动挂载，两台机器配置相同。
 
-```bash
-//192.168.31.10/personal_folder  /mnt/nas/personal   cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
-//192.168.31.10/Movies           /mnt/nas/movies     cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
-//192.168.31.10/Photos           /mnt/nas/photos     cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
-//192.168.31.10/迅雷下载          /mnt/nas/downloads  cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
-//192.168.31.10/docker           /mnt/nas/docker     cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
-//192.168.31.10/Musics           /mnt/nas/musics     cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
-//192.168.31.10/Games            /mnt/nas/games      cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
-```
-
-**凭证文件** `/root/.nas_credentials`（权限 600）：
-
-```
-username=cw
-password=你的NAS密码
-```
-
-**关键参数说明**：
-- `_netdev`：网络就绪后才挂载，防止开机时网络未通导致挂载失败
+**关键参数**：
+- `_netdev`：网络就绪后才挂载，防止开机时网络未通导致失败
 - `nofail`：挂载失败不阻塞开机
-- `vers=3.0`：使用 SMB 3.0 协议，性能和稳定性最佳
-- `uid=1000,gid=1000`：挂载后文件归属当前用户，无需 sudo
+- `vers=3.0`：SMB 3.0 协议，性能和稳定性最佳
+- `uid/gid`：挂载后文件归属当前用户，无需 sudo
+- 凭证通过独立文件管理（权限 600）
 
 **性能对比（实测）**：
 
