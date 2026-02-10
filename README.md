@@ -149,6 +149,45 @@ openclaw agent --agent main --message "你好"
 | RTX 3060 工作站 | GPU 推理节点 | i5-13490F / 32GB / RTX 3060 12GB | Whisper + LLM 总结，systemd 开机自启 |
 | 绿联 DH4300+ NAS | 持久化存储 | RK3588C / 8GB / 3.6T+1.8T 双卷 | 视频/音频/转写文本长期存储 |
 
+### NAS SMB 挂载
+
+NAS（IP 192.168.31.10）通过 SMB 3.0 协议挂载到 Surface Pro 和 3060 工作站，三台机器路径统一为 `/mnt/nas/`，文件可直接读写，无需 SCP/dd 传输。
+
+| 本地挂载路径 | NAS 共享名 | 说明 |
+|-------------|-----------|------|
+| `/mnt/nas/personal` | personal_folder | 个人文件（项目、文档、代码、视频转写存档） |
+| `/mnt/nas/movies` | Movies | 电影库 |
+| `/mnt/nas/photos` | Photos | 照片 |
+| `/mnt/nas/musics` | Musics | 音乐 |
+| `/mnt/nas/games` | Games | 游戏 |
+| `/mnt/nas/downloads` | 迅雷下载 | 下载目录 |
+| `/mnt/nas/docker` | docker | Docker 数据 |
+
+**挂载配置**（两台机器 `/etc/fstab` 相同）：
+
+```bash
+//192.168.31.10/personal_folder  /mnt/nas/personal   cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
+//192.168.31.10/Movies           /mnt/nas/movies     cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
+//192.168.31.10/Photos           /mnt/nas/photos     cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
+//192.168.31.10/迅雷下载          /mnt/nas/downloads  cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
+//192.168.31.10/docker           /mnt/nas/docker     cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
+//192.168.31.10/Musics           /mnt/nas/musics     cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
+//192.168.31.10/Games            /mnt/nas/games      cifs  credentials=/root/.nas_credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0,_netdev,nofail  0  0
+```
+
+**凭证文件** `/root/.nas_credentials`（权限 600）：
+
+```
+username=cw
+password=你的NAS密码
+```
+
+**关键参数说明**：
+- `_netdev`：网络就绪后才挂载，防止开机时网络未通导致挂载失败
+- `nofail`：挂载失败不阻塞开机
+- `vers=3.0`：使用 SMB 3.0 协议，性能和稳定性最佳
+- `uid=1000,gid=1000`：挂载后文件归属当前用户，无需 sudo
+
 **性能对比（实测）**：
 
 | 测试项 | Surface Pro | 3060 工作站 | NAS |
