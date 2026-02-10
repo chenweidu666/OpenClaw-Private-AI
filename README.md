@@ -35,7 +35,7 @@ graph TB
             direction TB
             S_HW["i5-7300U / 8GB / 256GB SSD<br/>~5W 低功耗 · 7×24 运行"]
             S1["OpenClaw Gateway"]
-            S_PLUGIN["custom-skills 插件<br/>6 个原生 Function Calling 工具"]
+            S_PLUGIN["custom-skills 插件<br/>5 个原生 Function Calling 工具"]
             S2["Qwen3-32B 对话<br/>(阿里云 DashScope API)"]
             S3["Nginx Web UI"]
             S4["飞书 WebSocket"]
@@ -116,8 +116,8 @@ sequenceDiagram
 | 2 | [Surface Ubuntu 系统安装](./docs/2_Surface_Ubuntu_Setup.md) | Surface Pro 5 安装 Ubuntu 22.04 + linux-surface 内核 |
 | 3 | [Nginx HTTPS Web UI](./docs/3_OpenClaw_Nginx_WebUI.md) | Nginx 反向代理、自签名 SSL、局域网 Web UI 访问 |
 | 4 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
-| 5 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、6 个实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
-| 6 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、6 个工具实战、踩坑总结 |
+| 5 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
+| 6 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、5 个工具实战、踩坑总结 |
 | — | **踩坑记录与时间线** | 15 个踩坑案例、最佳实践、部署时间线（29h）、功能路线图（见本文下方） |
 
 ---
@@ -882,10 +882,9 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | ✅ | sudo 命令执行 | AI 可安装软件、查询 SSD 健康、管理服务 |
 | ✅ | 记忆系统 | MEMORY.md 长期记忆 + 每日日志 |
 | ✅ | weather Skill | IP 定位 + wttr.in 天气查询 + 飞书每 2 小时推送 |
-| ✅ | personal_info Skill | 个人知识库，AI 可回答关于主人的学历、经历、项目等 |
 | ✅ | nas_search Skill | NAS 深度搜索（SSH 搜索比 SMB 快 10x+），简单文件访问直接走 SMB 挂载 |
 | ✅ | bilibili_summary Skill | B站视频：3060 下载到 NAS → Whisper GPU 转写 → OpenClaw Qwen API 总结 |
-| ✅ | **原生 Function Calling 插件** | 6 个 Skill 注册为 `cw_*` 原生工具，不依赖上下文，100% 确定性调用 |
+| ✅ | **原生 Function Calling 插件** | 5 个 Skill 注册为 `cw_*` 原生工具，不依赖上下文，100% 确定性调用 |
 | ⏳ | 小爱音箱语音交互 | Mi-GPT 已部署，等待小米账号安全验证生效 |
 | ❌ | bilibili 纯 API 备用链路 | 调研后放弃：DashScope Paraformer 不支持本地文件直传，需开通 OSS 中转，链路复杂收益低，3060 方案已足够 |
 | 📋 | 更多 Skill | 日程管理、Docker 管理、智能家居 |
