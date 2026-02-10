@@ -30,7 +30,7 @@
 
 **Skill 系统是 OpenClaw 的杀手级特性。** 一个 Markdown 文件 + 一个 Shell 脚本，就能给 AI 增加一种全新能力——不需要改一行 OpenClaw 源码。
 
-> **📌 重要更新**：本项目的 5 个 Skill 已通过**自定义插件**注册为**原生 function calling 工具**（`cw_*`），不再依赖系统提示上下文。Skill 脚本本身不变，插件作为调用入口包装它们。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
+> **📌 重要更新**：本项目的 5 个 Skill 已通过**自定义插件**注册为**原生 function calling 工具**（`cw_*`），不再依赖系统提示上下文。Skill 脚本本身不变，插件作为调用入口包装它们。详见 [原生工具插件开发](./6_OpenClaw_Native_Tools_Plugin.md)。
 
 每个 Skill 一个子目录，存放在 `~/.openclaw/skills/` 下：
 
@@ -138,7 +138,7 @@ metadata: { "openclaw": { "emoji": "🔧", "requires": { "bins": ["bash"] } } }
 
 ### ~~2.2 system_info Skill~~（已迁移为插件原生工具 `cw_system_info`）
 
-> **⚠️ 已废弃**：此 Skill 的调用方式已从 `read SKILL.md → exec` 迁移为**原生 function calling**（`cw_system_info`），脚本本身不变。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
+> **⚠️ 已废弃**：此 Skill 的调用方式已从 `read SKILL.md → exec` 迁移为**原生 function calling**（`cw_system_info`），脚本本身不变。详见 [原生工具插件开发](./6_OpenClaw_Native_Tools_Plugin.md)。
 
 **① 目标**
 
@@ -227,7 +227,7 @@ AI **真的执行了系统命令**，返回了品牌型号、CPU、内存、磁�
 
 ### ~~2.3 weather Skill~~（已解耦到 `1_monitor/scripts/weather/` + 插件 `cw_weather`）
 
-> **⚠️ 已废弃**：天气功能已从 OpenClaw Skill 完全解耦。采集/推送迁移到 `1_monitor/scripts/weather/`，AI 通过插件原生工具 `cw_weather` 读取 CSV 缓存数据，毫秒级响应。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
+> **⚠️ 已废弃**：天气功能已从 OpenClaw Skill 完全解耦。采集/推送迁移到 `1_monitor/scripts/weather/`，AI 通过插件原生工具 `cw_weather` 读取 CSV 缓存数据，毫秒级响应。详见 [原生工具插件开发](./6_OpenClaw_Native_Tools_Plugin.md)。
 
 **① 数据源**
 
@@ -332,7 +332,7 @@ timestamp,city,region,desc,temp_c,feels_c,humidity,wind_speed_kmh,wind_dir,press
 
 ### ~~2.4 personal_info Skill~~（已迁移为插件原生工具 `cw_personal_info`）
 
-> **⚠️ 已废弃**：此 Skill 已迁移为原生 function calling 工具（`cw_personal_info`），插件直接读取 SKILL.md 返回内容。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
+> **⚠️ 已废弃**：此 Skill 已迁移为原生 function calling 工具（`cw_personal_info`），插件直接读取 SKILL.md 返回内容。详见 [原生工具插件开发](./6_OpenClaw_Native_Tools_Plugin.md)。
 
 **① 目标与思路**
 
@@ -410,7 +410,7 @@ metadata: { "openclaw": { "emoji": "👤", "requires": { "bins": [] } } }
 
 ### ~~2.5 nas_search Skill~~（已迁移为插件原生工具 `cw_nas_search`）
 
-> **⚠️ 已废弃**：此 Skill 已迁移为原生 function calling 工具（`cw_nas_search`），9 种操作通过 JSON Schema `action` 参数结构化调用。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
+> **⚠️ 已废弃**：此 Skill 已迁移为原生 function calling 工具（`cw_nas_search`），9 种操作通过 JSON Schema `action` 参数结构化调用。详见 [原生工具插件开发](./6_OpenClaw_Native_Tools_Plugin.md)。
 
 **① 目标与思路**
 
@@ -557,7 +557,7 @@ flowchart LR
 
 ### ~~2.6 bilibili_summary Skill~~（已迁移为插件原生工具 `cw_bilibili_summary`）
 
-> **⚠️ 已废弃**：此 Skill 已迁移为原生 function calling 工具（`cw_bilibili_summary`），模型直接传入 URL 参数调用。详见 [原生工具插件开发](./7_OpenClaw_Native_Tools_Plugin.md)。
+> **⚠️ 已废弃**：此 Skill 已迁移为原生 function calling 工具（`cw_bilibili_summary`），模型直接传入 URL 参数调用。详见 [原生工具插件开发](./6_OpenClaw_Native_Tools_Plugin.md)。
 
 **① 目标与定位**
 

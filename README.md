@@ -6,20 +6,21 @@
 
 > **OpenClaw** 是 2026 年最火的开源 AI 助手平台之一——它不只是一个聊天机器人框架，而是一个完整的 **AI Agent 操作系统**：支持飞书 / Web 多渠道接入，内置工具调用（function calling）、技能系统（Skills）、记忆管理、多 Agent 协作，还能接入任意 OpenAI 兼容的大模型。
 >
-> 本项目是一份**从零到可用的完整实战记录**——用一台旧 Surface Pro + 一块 RTX 3060 + 一台家用 NAS，搭建三机协同的分布式私人 AI 助手，24 小时踩坑实录。
+> 本项目是一份**从零到可用的完整实战记录**——用一台旧 Surface Pro + 一台 RTX 3060 工作站 + 一台家用 NAS，搭建三机协同的分布式私人 AI 助手，24 小时踩坑实录。
 
 ---
 
 ## 项目亮点
 
-- **三机协同架构**：Surface Pro（5W 低功耗调度中心）+ RTX 3060（GPU 推理）+ NAS（5.4T 持久存储），局域网 SSH 互联
+- **三机协同架构**：Surface Pro（5W 低功耗调度中心）+ 3060 工作站（GPU 推理）+ NAS（5.4T 持久存储），局域网 SSH 互联
 - **5 个实战 Skill**：系统信息、天气查询推送、个人知识库、NAS 文件搜索、B站视频自动总结
-- **B站视频一键总结**：飞书发一个链接 → 自动下载 → Whisper GPU 转写 → Qwen3-32B 总结 → NAS 存档，全流程 ~100 秒
+- **B站视频一键总结**：飞书发一个链接 → 3060 下载到 NAS → Whisper GPU 转写 → OpenClaw Qwen API 总结 → NAS 存档
 - **零成本语音转写**：利用闲置 3060 GPU 运行 faster-whisper，无需云端 ASR 付费，音视频数据不出局域网
+- **NAS SMB 直挂**：三台机器统一挂载 NAS 到 `/mnt/nas/`，文件直接读写，无需 SCP/dd 传输
 - **飞书原生集成**：通过飞书对话即可操控 AI 助手，支持工具调用、文件搜索、视频总结等
 - **原生 Function Calling 插件**：通过自定义插件将 Skill 注册为原生工具，不依赖上下文，100% 确定性调用
-- **完整踩坑记录**：14 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
-- **硬件性能实测**：Surface Pro / 3060 / NAS 三机 CPU、内存、磁盘、Node.js 基准测试对比
+- **完整踩坑记录**：15 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
+- **硬件性能实测**：Surface Pro / 3060 工作站 / NAS 三机 CPU、内存、磁盘、Node.js 基准测试对比
 
 ---
 
@@ -34,18 +35,17 @@ graph TB
             direction TB
             S_HW["i5-7300U / 8GB / 256GB SSD<br/>~5W 低功耗 · 7×24 运行"]
             S1["OpenClaw Gateway"]
-            S_PLUGIN["custom-skills 插件<br/>5 个原生 Function Calling 工具"]
+            S_PLUGIN["custom-skills 插件<br/>6 个原生 Function Calling 工具"]
             S2["Qwen3-32B 对话<br/>(阿里云 DashScope API)"]
             S3["Nginx Web UI"]
             S4["飞书 WebSocket"]
         end
 
-        subgraph GPU["⚡ 3060 GPU 工作站 — 推理节点"]
+        subgraph GPU["⚡ 3060 GPU 工作站 — 转写节点"]
             direction TB
             G_HW["i5-13490F / 32GB / RTX 3060 12GB"]
             G1["FastAPI :8090"]
             G2["Whisper large-v3 转写"]
-            G3["Qwen3-32B LLM 总结"]
             G4["systemd 开机自启"]
         end
 
@@ -59,9 +59,9 @@ graph TB
 
     USER["👤 用户<br/>飞书 / Web UI"] -->|"对话请求"| S4
     USER -->|"HTTPS"| S3
-    S1 -->|"HTTP :8090<br/>视频转写+总结"| G1
-    S1 -->|"SSH<br/>文件搜索"| N2
-    G1 -->|"SSH + dd<br/>转写结果存档"| N1
+    S1 -->|"HTTP :8090<br/>视频下载+转写"| G1
+    S1 -->|"SMB 挂载<br/>NAS 文件直接访问"| N2
+    G1 -->|"SMB 直写<br/>视频+转写结果"| N1
     S2 -.->|"API 调用"| CLOUD["☁️ 阿里云 DashScope"]
 
     style SURFACE fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
@@ -78,20 +78,20 @@ graph TB
 sequenceDiagram
     participant U as 👤 用户 (飞书)
     participant S as 🖥️ Surface Pro<br/>OpenClaw Gateway
-    participant G as ⚡ 3060 工作站<br/>GPU 推理
-    participant N as 💾 NAS<br/>持久存储
+    participant G as ⚡ 3060 工作站<br/>GPU 转写
+    participant N as 💾 NAS (SMB 挂载)<br/>持久存储
 
     U->>S: 发送 B站链接
-    S->>S: AI 匹配 bilibili_summary Skill
+    S->>S: AI function call cw_bilibili_summary
     S->>G: POST /api/transcribe (URL)
-    G->>G: yt-dlp 下载视频
-    G->>G: ffmpeg 提取音频
-    G->>G: Whisper large-v3 转写
-    G->>G: Qwen3-32B 生成总结
-    G->>N: SSH + dd 传输存档
-    G-->>S: 返回 AI 总结 + 元数据
+    G->>N: yt-dlp 下载视频 → 直存 NAS
+    G->>G: ffmpeg 提取音频 (本地临时)
+    G->>G: Whisper large-v3 语音转写
+    G->>N: transcript.txt / .srt / info.json 写入 NAS
+    G-->>S: 返回转写文本 + 元数据
+    S->>S: Qwen API (云端) 生成结构化总结
     S-->>U: 飞书回复视频总结
-    Note over U,N: 全流程 ~100 秒
+    Note over U,N: 3060 负责 GPU 转写，OpenClaw 负责 AI 总结
 ```
 
 ---
@@ -103,8 +103,8 @@ sequenceDiagram
 | 1 | **system_info** 🖥️ | 命令执行型 | 读取硬件/软件/温度信息 | bash + sensors |
 | 2 | **weather** 🌤️ | 命令执行 + 定时推送 | 天气查询 + 飞书每 2h 推送 | wttr.in + cron + Webhook |
 | 3 | **personal_info** 👤 | 纯数据型 | 个人知识库问答 | SKILL.md 知识注入 |
-| 4 | **nas_search** 🗄️ | 远程命令型 | NAS 文件搜索（10 种子命令） | SSH + find/du |
-| 5 | **bilibili_summary** 📺 | API 服务型 | B站视频转写 + AI 总结 | 3060 GPU + Whisper + Qwen3-32B |
+| 4 | **nas_search** 🗄️ | 深度搜索型 | NAS 文件搜索（SSH 比 SMB 快 10x+） | SSH + find/du |
+| 5 | **bilibili_summary** 📺 | API 服务型 | B站视频：3060 转写 + Qwen API 总结 | 3060 Whisper + DashScope API |
 
 ---
 
@@ -117,8 +117,8 @@ sequenceDiagram
 | 3 | [Nginx HTTPS Web UI](./docs/3_OpenClaw_Nginx_WebUI.md) | Nginx 反向代理、自签名 SSL、局域网 Web UI 访问 |
 | 4 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
 | 5 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、6 个实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
-| 6 | [**原生工具插件开发**](./docs/7_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、5 个工具实战、踩坑总结 |
-| — | **踩坑记录与时间线** | 14 个踩坑案例、最佳实践、部署时间线（28h）、功能路线图（见本文下方） |
+| 6 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、6 个工具实战、踩坑总结 |
+| — | **踩坑记录与时间线** | 15 个踩坑案例、最佳实践、部署时间线（29h）、功能路线图（见本文下方） |
 
 ---
 
@@ -283,14 +283,14 @@ ls -la ~/.openclaw/skills/
 |:----:|-----------|----------|
 | 1 | Gateway 启动时 `bilibili_summary` Skill 尚未配置完成 | — |
 | 2 | AI 尝试调用 `bilibili_summary` 原生工具 → **`Tool bilibili_summary not found`** | session.jsonl: `"toolName": "bilibili_summary"` → `not found` |
-| 3 | AI 退而求其次，SSH 到 3060 直接执行 `python3 server.py` | session.jsonl: exec → `ssh ubuntu-3060 'python3 server.py'` |
+| 3 | AI 退而求其次，SSH 到 3060 工作站直接执行 `python3 server.py` | session.jsonl: exec → `ssh ubuntu-3060 'python3 server.py'` |
 | 4 | systemd 已在运行 server.py（8090端口），再起一个 → **端口冲突** | `ERROR: [Errno 98] address already in use` |
 | 5 | AI 看到端口冲突错误，开始输出排查步骤 | assistant: "请手动执行 lsof / kill..." |
 | 6 | 后续 Skill 已正常加载（`✓ ready`），但**对话历史已被污染**，AI 继续复读 | 多轮消息全是排查步骤 |
 
 **诊断过程**：
 
-1. 手动验证 3060 服务正常：
+1. 手动验证 3060 工作站服务正常：
    ```bash
    curl -s http://192.168.1.200:8090/api/status
    # → {"status":"running","videos_processed":3}  ← 完全正常
@@ -346,7 +346,7 @@ source ~/.openclaw/env && openclaw gateway --force
 | 飞书发送视频链接 | ✅ Gateway 正确接收 |
 | AI 匹配 bilibili_summary Skill | ✅ 读取 SKILL.md |
 | AI 通过 exec 执行 bilibili_summary.sh | ✅ 正确传递 URL 参数 |
-| 3060 处理（下载→转写→总结→NAS） | ✅ 114.6s 完成，HTTP 200 |
+| 3060 工作站处理（下载→转写→总结→NAS） | ✅ 114.6s 完成，HTTP 200 |
 | AI 解析输出并回复飞书 | ✅ 结构化总结成功回复用户 |
 
 测试视频：`BV1RkFAznESD`（"Agent Skills 做知识库检索，能比传统 RAG 效果更好吗？" 13:35，5619 字符转写）
@@ -625,7 +625,87 @@ openclaw plugins doctor
 > - 要实现**不依赖上下文的确定性工具调用**，必须用插件 `api.registerTool()` 注册原生工具
 > - 插件不跟随符号链接，需通过 `plugins.load.paths` 配置加载路径
 > - 插件工具命名建议加前缀（如 `cw_`），避免与核心工具冲突
-> - 详细的插件开发指南见 [原生工具插件开发](./docs/7_OpenClaw_Native_Tools_Plugin.md)
+> - 详细的插件开发指南见 [原生工具插件开发](./docs/6_OpenClaw_Native_Tools_Plugin.md)
+
+### 坑 15：execSync 阻塞事件循环 → bilibili_summary 工具调用被截断
+
+**现象**：通过飞书发送 B 站视频链接后，AI 回复"正在处理，预计 3-5 分钟"，然后**永远不再回复**。多次重试均相同，`/reset` 命令也无响应。
+
+检查会话日志发现：`cw_bilibili_summary` 工具调用仅返回了开头的 echo 消息，**实际处理结果被丢弃**：
+
+```
+toolResult: "⏳ 检查 3060 GPU 服务...\n⏳ 正在处理视频（下载 → 转写 → AI总结），请稍候...\n"
+// ← 只有这两行，curl 5分钟的实际结果全丢了
+```
+
+同时 Gateway 在工具执行期间完全无法响应其他消息（包括 `/reset`）。
+
+**根本原因**：
+
+自定义插件 `index.ts` 中的 `runScript()` 函数使用了 Node.js 的 **`execSync`（同步阻塞）**：
+
+```typescript
+function runScript(cmd: string, timeoutMs = 30000): string {
+  const output = execSync(cmd, { timeout: timeoutMs, ... });
+  return output.trim();
+}
+```
+
+`bilibili_summary` 虽然设置了 `300000ms`（5 分钟）超时，但 `execSync` **阻塞整个 Node.js 事件循环**：
+
+| 问题 | 影响 |
+|------|------|
+| 事件循环阻塞 | Gateway 无法处理飞书消息、心跳、`/reset` 命令 |
+| OpenClaw 框架超时 | 检测到 Gateway 无响应，提前终止工具调用，只返回已有的 stdout |
+| 结果丢失 | curl 到 3060 工作站的 5 分钟请求被终止，AI 总结结果丢弃 |
+| 僵尸进程 | bash 脚本中的子进程（curl）未被正确终止，持续占用资源 |
+
+**解决方案**：
+
+将长时间运行的工具改用异步 `exec`，不阻塞事件循环：
+
+```typescript
+import { exec } from "child_process";
+
+function runScriptAsync(cmd: string, timeoutMs = 300000): Promise<string> {
+  return new Promise((resolve) => {
+    exec(cmd, {
+      encoding: "utf-8",
+      timeout: timeoutMs,
+      maxBuffer: 10 * 1024 * 1024, // 10MB — 长视频转写文本可能很大
+      env: { ...process.env, PATH: process.env.PATH },
+    }, (error, stdout, stderr) => {
+      if (error) {
+        resolve(stdout || stderr || `Error: ${error.message}`);
+      } else {
+        resolve((stdout || "").trim() || "(no output)");
+      }
+    });
+  });
+}
+```
+
+`bilibili_summary` 工具改为：
+```typescript
+async execute(_id: string, params: { url: string; lang?: string }) {
+  return text(await runScriptAsync(cmd, 600000)); // 10 min timeout, 异步不阻塞
+}
+```
+
+**效果**：
+
+| 指标 | 修复前（execSync） | 修复后（async exec） |
+|------|-------------------|---------------------|
+| 事件循环 | 阻塞 5 分钟，Gateway 完全无响应 | 不阻塞，Gateway 可正常处理其他消息 |
+| 工具结果 | 被框架截断，只返回 echo 消息 | 完整返回 3060 处理结果（AI 总结 + 转写文本） |
+| `/reset` 响应 | 无响应（事件循环卡死） | 正常响应 |
+| 超时配置 | 5 min（不够，44 分钟视频需 ~5.3 min） | 10 min（留足余量） |
+
+> **教训**：
+> - Node.js 插件中**绝对不要用 `execSync` 执行超过几秒的命令**——它会阻塞事件循环，导致整个服务不可用
+> - OpenClaw Gateway 是单线程 Node.js 服务，一次 `execSync` 阻塞 = 全局瘫痪
+> - 长时间运行的工具必须用异步 `exec` + `maxBuffer`（默认 1MB 不够大，转写文本可达数 MB）
+> - 同步执行（`runScript` / `execSync`）保留给 < 60s 的短命令即可
 
 ---
 
@@ -703,6 +783,11 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | **用插件注册原生工具** | 自定义 Skill 通过插件 `api.registerTool()` 注册为 function calling 工具，不依赖上下文，100% 确定性调用 |
 | **插件不跟随 symlink** | 插件目录不能用符号链接，需通过 `plugins.load.paths` 指向 Git 项目路径 |
 | **工具名加前缀** | 插件工具命名加 `cw_` 前缀避免与核心工具冲突（如 `cw_system_info` 而非 `system_info`） |
+| **NAS SMB 挂载写入 TOOLS.md** | AI 必须知道 NAS 挂载映射（如 `/mnt/nas/personal` = 个人文件），否则会猜错路径 |
+| **NAS 简单访问不用工具** | 文件路径明确时直接 `exec`/`read` 访问 `/mnt/nas/`，只有深度搜索才用 `cw_nas_search` |
+| **转写与总结解耦** | GPU 节点只做 Whisper 转写（擅长的事），AI 总结交给云端 Qwen API，各司其职 |
+| **产出文件直写 NAS** | 3060 和 Surface 统一 SMB 挂载 `/mnt/nas/`，不再用 SSH+dd 传输，减少出错点 |
+| **Gateway restart 要先 stop** | `systemctl --user restart` 有时杀不干净旧进程，导致端口占用无限重启。稳妥做法：先 `stop` → 确认进程已退出 → 再 `start` |
 
 ---
 
@@ -729,13 +814,13 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | ✅ | 2026-02-09 12:00 | 撤回 doge5l_monitor / temp_monitor 独立 Skill，清理 OpenClaw 残留 |
 | ✅ | 2026-02-09 12:25 | 温度监控集成到 system_info，通过 `sensors` 命令实时采集（不再依赖外部 CSV） |
 | ✅ | 2026-02-09 12:30 | 重构 Skill 文档：精简总览、统一章节编号、删除已撤回内容 |
-| ✅ | 2026-02-09 14:00 | 开发 bilibili_summary Skill v1~v3：架构演进（本地全流程 → 3060 FastAPI 服务） |
-| ✅ | 2026-02-09 17:00 | bilibili_summary v4~v5：3060 服务新增 Qwen3-32B LLM 总结，NAS dd 传输修复 |
-| ✅ | 2026-02-09 19:00 | 3060 FastAPI systemd 开机自启、UFW 防火墙、NAS `cat\|ssh dd` 传输修复 |
+| ✅ | 2026-02-09 14:00 | 开发 bilibili_summary Skill v1~v3：架构演进（本地全流程 → 3060 工作站 FastAPI 服务） |
+| ✅ | 2026-02-09 17:00 | bilibili_summary v4~v5：3060 工作站服务新增 Qwen3-32B LLM 总结，NAS dd 传输修复 |
+| ✅ | 2026-02-09 19:00 | 3060 工作站 FastAPI systemd 开机自启、UFW 防火墙、NAS `cat\|ssh dd` 传输修复 |
 | ✅ | 2026-02-09 20:00 | 更新 Workspace（TOOLS.md / USER.md / MEMORY.md）+ Git 推送双仓库 |
 | ✅ | 2026-02-09 21:00 | 更新 Skills 文档：新增"为什么用本地 Whisper"章节、修复 Mermaid 架构图 |
 | ✅ | 2026-02-09 22:00 | 排查 AI 死循环问题（坑 8 + 坑 9）：清除被污染的会话 + 移除 MEMORY.md |
-| ✅ | 2026-02-09 22:55 | **bilibili_summary 端到端验证成功**：飞书发链接 → AI 匹配 Skill → exec 脚本 → 3060 处理 114.6s → 飞书回复总结 |
+| ✅ | 2026-02-09 22:55 | **bilibili_summary 端到端验证成功**：飞书发链接 → AI 匹配 Skill → exec 脚本 → 3060 工作站处理 114.6s → 飞书回复总结 |
 | ✅ | 2026-02-09 19:30 | 项目目录整理：OpenClaw 配置仓库迁移至 `4_openclaw/1_OpenClawProject`，修复全部 17 个符号链接 |
 | ✅ | 2026-02-09 19:50 | 恢复 system_info / weather / personal_info 三个自定义 Skill（迁移时丢失） |
 | ✅ | 2026-02-09 23:03 | **修复 Surface 无限重启问题**（坑 10 + 坑 11）：watchdog 阈值调整 + temp_monitor 加锁 |
@@ -749,12 +834,16 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | ✅ | 2026-02-10 14:35 | 精简 TOOLS.md：移除 exec 命令速查（不再需要），改为列出原生工具名 |
 | ✅ | 2026-02-10 14:40 | 端到端验证：5 个技能全部通过 function calling 调用成功 |
 | ✅ | 2026-02-10 14:45 | **天气功能解耦**：weather 采集/推送迁移到 `1_monitor/scripts/weather/`，cw_weather 改读 CSV |
+| ✅ | 2026-02-10 15:42 | **修复 bilibili_summary 工具调用被截断**（坑 15）：`execSync` → 异步 `exec`，解决事件循环阻塞 |
+| ✅ | 2026-02-10 16:00 | **NAS 路径优化**：TOOLS.md 添加 NAS SMB 挂载映射表，`cw_nas_search` 重新定位为"深度搜索"工具 |
+| ✅ | 2026-02-10 16:20 | **bilibili_summary v6 架构重构**：3060 只做下载+转写（存 NAS），AI 总结改用 OpenClaw Qwen API（云端） |
+| ✅ | 2026-02-10 16:20 | 3060 `server.py` v2.0 已移除 Qwen3-32B 本地总结，全部产出直接 SMB 写入 NAS |
 
-> 从零到功能完备的 OpenClaw 私人 AI 助手，总计约 **28 小时**（还在持续进化中）。
+> 从零到功能完备的 OpenClaw 私人 AI 助手，总计约 **29 小时**（还在持续进化中）。
 >
-> **2/9 回顾**：完成了 bilibili_summary — 第一个 API 服务型 Skill，实现三机协同（Surface + 3060 GPU + NAS）的分布式架构。过程中踩了多个坑（NAS 传输、端口冲突、Qwen3 API、对话历史污染），均已解决并记录。最终端到端验证成功：飞书发送B站链接 → AI 自动匹配 Skill → 执行脚本 → 3060 完成下载+转写+总结 → AI 回复飞书用户。晚间还修复了 Surface Pro 因 watchdog + cron 脚本叠加导致的无限重启问题（坑 10 + 坑 11），系统负载从 25 降至 2.9，恢复稳定。
+> **2/9 回顾**：完成了 bilibili_summary — 第一个 API 服务型 Skill，实现三机协同（Surface Pro + 3060 工作站 + NAS）的分布式架构。过程中踩了多个坑（NAS 传输、端口冲突、Qwen3 API、对话历史污染），均已解决并记录。最终端到端验证成功：飞书发送B站链接 → AI 自动匹配 Skill → 执行脚本 → 3060 工作站完成下载+转写+总结 → AI 回复飞书用户。晚间还修复了 Surface Pro 因 watchdog + cron 脚本叠加导致的无限重启问题（坑 10 + 坑 11），系统负载从 25 降至 2.9，恢复稳定。
 >
-> **2/10 回顾**：经历了 qwen_usage Skill 开发全过程（阿里云 BSS OpenAPI 账单查询），最终将其从 OpenClaw 解耦为独立脚本。发现并修复了坑 12（nativeSkills）和坑 13（上下文溢出）。最重要的突破是**坑 14**：深入分析 OpenClaw 源码后发现，Skill 的上下文注入机制对 14B/32B 模型都不够可靠，`nativeSkills` 配置也并非 function calling 而只是平台斜杠命令。最终通过**插件系统 `api.registerTool()`** 将 5 个自定义 Skill 注册为原生 function calling 工具，实现了**不依赖上下文的确定性调用**，从根本上解决了技能调用不稳定的问题。
+> **2/10 回顾**：经历了 qwen_usage Skill 开发全过程（阿里云 BSS OpenAPI 账单查询），最终将其从 OpenClaw 解耦为独立脚本。发现并修复了坑 12（nativeSkills）和坑 13（上下文溢出）。最重要的突破是**坑 14**：深入分析 OpenClaw 源码后发现，Skill 的上下文注入机制对 14B/32B 模型都不够可靠，`nativeSkills` 配置也并非 function calling 而只是平台斜杠命令。最终通过**插件系统 `api.registerTool()`** 将 6 个自定义 Skill 注册为原生 function calling 工具，实现了**不依赖上下文的确定性调用**。下午进行了两项架构优化：(1) **NAS 路径映射**——TOOLS.md 写入完整 SMB 挂载表，AI 不再对 NAS 路径猜测，`cw_nas_search` 重新定位为 SSH 深度搜索；(2) **bilibili_summary v6**——3060 不再做 AI 总结，只负责下载+Whisper 转写（全部直写 NAS），总结改由 OpenClaw 的 Qwen API（云端）完成，实现转写与总结的解耦。
 
 ---
 
@@ -770,9 +859,9 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | ✅ | 记忆系统 | MEMORY.md 长期记忆 + 每日日志 |
 | ✅ | weather Skill | IP 定位 + wttr.in 天气查询 + 飞书每 2 小时推送 |
 | ✅ | personal_info Skill | 个人知识库，AI 可回答关于主人的学历、经历、项目等 |
-| ✅ | nas_search Skill | SSH 远程搜索 NAS 文件（10 种子命令：search/list/tree/type/size/recent 等） |
-| ✅ | bilibili_summary Skill | B站视频全流程：下载 → Whisper GPU 转写 → Qwen3-32B 总结 → NAS 存储 |
-| ✅ | **原生 Function Calling 插件** | 5 个 Skill 注册为 `cw_*` 原生工具，不依赖上下文，100% 确定性调用 |
+| ✅ | nas_search Skill | NAS 深度搜索（SSH 搜索比 SMB 快 10x+），简单文件访问直接走 SMB 挂载 |
+| ✅ | bilibili_summary Skill | B站视频：3060 下载到 NAS → Whisper GPU 转写 → OpenClaw Qwen API 总结 |
+| ✅ | **原生 Function Calling 插件** | 6 个 Skill 注册为 `cw_*` 原生工具，不依赖上下文，100% 确定性调用 |
 | ⏳ | 小爱音箱语音交互 | Mi-GPT 已部署，等待小米账号安全验证生效 |
 | 📋 | 更多 Skill | 日程管理、Docker 管理、智能家居 |
 | 📋 | Heartbeat 定时任务 | AI 主动推送日历提醒 |

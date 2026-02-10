@@ -98,6 +98,7 @@ flowchart LR
         A --> D["cw_nas_search"]
         A --> E["cw_bilibili_summary"]
         A --> F["cw_personal_info"]
+        A --> G2["cw_qwen_billing"]
     end
 
     subgraph GATEWAY["🦞 OpenClaw Gateway"]
@@ -339,25 +340,27 @@ api.on("before_agent_start", (event: any, ctx: any) => {
 
 ---
 
-## 5. 实战：5 个原生工具
+## 5. 实战：6 个原生工具
 
 | 工具名 | 对应脚本 | 参数 | 超时 |
 |--------|----------|------|------|
 | `cw_system_info` | `gather_info.sh` | `query`: full/cpu/memory/disk/temperature/network/services | 15s |
 | `cw_weather` | `weather_read.sh`（读CSV） | `city`: 城市名（可选，默认南京读CSV秒回） | 15s |
-| `cw_nas_search` | `nas_search.sh` | `action`: search/type/list/tree/size/recent/overview/movies/photos + `keyword` + `path` | 30s |
-| `cw_bilibili_summary` | `bilibili_summary.sh` | `url`: B站链接 + `lang`: auto/zh/ja/en | 5min |
+| `cw_nas_search` | `nas_search.sh` | `action`: search/type/list/tree/size/recent/overview/movies/photos + `keyword` + `path`（仅深度搜索用，简单访问直接走 SMB 挂载） | 30s |
+| `cw_bilibili_summary` | `bilibili_summary.sh` | `url`: B站链接 + `lang`: auto/zh/ja/en（3060 下载+转写，返回文本由 AI 总结） | 10min |
 | `cw_personal_info` | 直接读 SKILL.md | `topic`: all/education/work/skills/basic | — |
+| `cw_qwen_billing` | `qwen_billing.sh` | `month`: YYYY-MM（可选，默认当月） | 60s |
 
 **端到端测试结果**：
 
 | # | 测试消息 | 调用工具 | 方式 | 状态 |
 |---|----------|----------|------|------|
 | 1 | "电脑温度多少" | `cw_system_info` | function call | ✅ CPU 75°C |
-| 2 | "南京天气" | `cw_weather` | function call | ✅ 10°C 阴天 |
+| 2 | "南京天气" | `cw_weather` | function call | ✅ 8°C 阴天 |
 | 3 | "NAS存储空间怎样" | `cw_nas_search` | function call | ✅ volume2 使用 79% |
 | 4 | "你主人是谁" | `cw_personal_info` | function call | ✅ 完整简历输出 |
 | 5 | "总结B站视频 URL" | `cw_bilibili_summary` | function call | ✅ 正确报告 404（测试 URL） |
+| 6 | "Qwen API花了多少钱" | `cw_qwen_billing` | function call | ✅ 本月 ¥11.37，按模型拆分 |
 
 ---
 
@@ -412,6 +415,41 @@ cw_weather 插件 → weather_read.sh → 读 CSV 最新行 ──┘
 - 默认城市（南京）读 CSV 毫秒级响应，不消耗 API 调用
 - 非默认城市走实时查询兜底
 - 飞书推送也从 CSV 读取，不重复查询 API
+
+### NAS SMB 挂载 — 简单访问不需要 cw_nas_search
+
+NAS 已通过 SMB 挂载到 Surface Pro 和 3060 两台机器的 `/mnt/nas/`：
+
+| 本地挂载路径 | NAS 共享 | 说明 |
+|-------------|---------|------|
+| `/mnt/nas/personal` | personal_folder | 个人文件 |
+| `/mnt/nas/movies` | Movies | 电影库 |
+| `/mnt/nas/photos` | Photos | 照片 |
+| `/mnt/nas/downloads` | 迅雷下载 | 下载目录 |
+| ... | ... | ... |
+
+**使用原则**：
+- 用户给出明确路径（如"NAS 的 Openclaw-Project/xxx"）→ AI 直接用内置 `exec`/`read` 访问 `/mnt/nas/personal/Openclaw-Project/xxx`
+- 需要关键词搜索、按类型搜、最近修改等 → 调用 `cw_nas_search`（走 SSH，搜索速度是 SMB 的 10 倍+）
+
+### bilibili_summary 的转写与总结解耦
+
+v6 架构将 3060 GPU 定位为**纯转写节点**，AI 总结由 OpenClaw 的 Qwen API（云端）完成：
+
+```
+用户发 B站链接
+  ↓
+cw_bilibili_summary → 3060 FastAPI
+  ↓
+3060: 下载到 NAS → ffmpeg → Whisper GPU 转写 → 结果存 NAS
+  ↓
+返回转写文本 → OpenClaw AI (Qwen API) 生成结构化总结
+```
+
+好处：
+- 3060 只做它最擅长的事（GPU 转写），不需要运行大语言模型
+- 总结质量由云端模型决定，可随时切换更强的模型
+- 所有文件（视频/音频/转写/元信息）直接 SMB 写入 NAS，无需 SSH+dd 传输
 
 ### description 是调用触发的关键
 
