@@ -38,33 +38,41 @@
 
 > 这一章是为 OpenClaw 准备运行环境。如果你已经有一台 Linux 服务器或 VPS，可以直接跳到 [第 3 章：安装 OpenClaw](#3-安装-openclaw)。
 
-### 我的硬件：Surface Pro 5
+### 我的硬件：绿联 DH4300+ NAS
 
 | 项目 | 规格 |
 |------|------|
-| CPU | Intel Core i5-7300U @ 2.60GHz（双核四线程） |
-| 内存 | 8GB LPDDR3 |
-| 存储 | TOSHIBA NVMe 256GB |
-| GPU | Intel HD Graphics 620（核显） |
-| 屏幕 | 12.3 英寸 2736×1824 |
-| 发布年份 | 2017 年 |
+| CPU | Rockchip RK3588C（8 核 ARM64） |
+| 内存 | 8GB |
+| 存储 | 3.6T + 1.8T 双卷（共 5.4T） |
+| 系统 | Debian 12 (bookworm) / UGOS |
+| 功耗 | ~15W（7×24 运行） |
 
-这台机器跑 Windows 10 已经非常吃力——开几个 Chrome 标签页内存就飙到 90%，没有风扇的 Surface 直接歇菜。但跑 OpenClaw 只需要 Node.js 网关 + 网络连接，完全没问题。
+最初使用 Surface Pro 5（i5-7300U / 8GB）作为调度中心，但 2 核 4 线程在多服务场景下负载极高，watchdog 反复触发重启，系统极不稳定。绿联 NAS 本身就是 7×24 运行的设备，RK3588C 8 核 + 8GB 内存足以运行 OpenClaw Gateway，且磁盘 I/O 极强（2.1 GB/s），存储和调度合为一体。
 
 ### 环境要求
 
-Ubuntu 资源占用远低于 Windows，非常适合当 7×24 小时服务器。我们只需要确保：
+NAS 运行 Debian 12，可通过 SSH 管理。我们只需要确保：
 
-- ✅ Ubuntu 22.04 LTS 运行正常
+- ✅ Debian 12 / Ubuntu 等 Linux 系统运行正常
 - ✅ SSH 远程管理已配置
 - ✅ Node.js v22+ 已安装（`node -v` 确认）
-- ✅ 固定局域网 IP 已绑定（如 `192.168.1.100`）
+- ✅ 固定局域网 IP 已绑定（如 `192.168.31.10`）
+
+> **注意**：部分 NAS（如绿联 UGOS）的 apt 源不完整，通过 NodeSource 安装 Node.js 22 可能遇到依赖冲突。推荐使用 **nvm** 安装：
+>
+> ```bash
+> curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+> source ~/.bashrc
+> nvm install 22
+> node -v  # 确认 v22.x
+> ```
 
 ---
 
 ## 3. 安装 OpenClaw
 
-这是最激动人心的部分——三条命令就能把 AI 助手跑起来。
+这是最激动人心的部分——几条命令就能把 AI 助手跑起来。
 
 我们使用官方提供的 **[OpenClawInstaller](https://github.com/miaoxworld/OpenClawInstaller)** 一键部署工具来完成安装。
 
@@ -258,7 +266,7 @@ $ openclaw agent --agent main --message "你好，你是什么模型？"
 
 > 详细内容已独立成文档，详见：**[Nginx HTTPS 配置指南](./3_OpenClaw_Nginx_WebUI.md)**
 
-OpenClaw 自带 **Control UI**（Web 聊天界面），默认监听 `127.0.0.1:18789`。通过 Nginx 反向代理 + 自签名 SSL，可以让局域网内的手机、平板、其他电脑通过 `https://192.168.1.100:7860` 访问。
+OpenClaw 自带 **Control UI**（Web 聊天界面），默认监听 `127.0.0.1:18789`。通过 Nginx 反向代理 + 自签名 SSL，可以让局域网内的手机、平板、其他电脑通过 `https://192.168.31.10:7860` 访问。
 
 <p align="center">
   <img src="../images/openclaw_webui_chat.png" alt="OpenClaw Web UI 聊天界面" width="600" />

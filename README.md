@@ -1,4 +1,4 @@
-# OpenClaw 实战部署：三机协同打造 7×24 私人 AI 助手
+# OpenClaw 实战部署：NAS + GPU 双机协同打造 7×24 私人 AI 助手
 
 <p align="center">
   <img src="images/openclaw_logo.png" alt="OpenClaw Logo" width="200" />
@@ -6,21 +6,21 @@
 
 > **OpenClaw** 是 2026 年最火的开源 AI 助手平台之一——它不只是一个聊天机器人框架，而是一个完整的 **AI Agent 操作系统**：支持飞书 / Web 多渠道接入，内置工具调用（function calling）、技能系统（Skills）、记忆管理、多 Agent 协作，还能接入任意 OpenAI 兼容的大模型。
 >
-> 本项目是一份**从零到可用的完整实战记录**——用一台旧 Surface Pro + 一台 RTX 3060 工作站 + 一台家用 NAS，搭建三机协同的分布式私人 AI 助手，24 小时踩坑实录。
+> 本项目是一份**从零到可用的完整实战记录**——用一台绿联 DH4300+ NAS（7×24 低功耗调度中心）+ 一台 RTX 3060 工作站（GPU 推理），搭建双机协同的私人 AI 助手，完整踩坑实录。
 
 ---
 
 ## 项目亮点
 
-- **三机协同架构**：Surface Pro（5W 低功耗调度中心）+ 3060 工作站（GPU 推理）+ NAS（5.4T 持久存储），局域网 SSH 互联
+- **双机协同架构**：绿联 NAS DH4300+（7×24 低功耗调度中心 + 5.4T 持久存储）+ 3060 工作站（GPU 推理），局域网互联
 - **5 个实战 Skill**：系统信息、天气查询推送、个人知识库、NAS 文件搜索、B站视频自动总结
 - **B站视频一键总结**：飞书发一个链接 → 3060 下载到 NAS → Whisper GPU 转写 → OpenClaw Qwen API 总结 → NAS 存档
 - **零成本语音转写**：利用闲置 3060 GPU 运行 faster-whisper，无需云端 ASR 付费，音视频数据不出局域网
-- **NAS SMB 直挂**：三台机器统一挂载 NAS 到 `/mnt/nas/`，文件直接读写，无需 SCP/dd 传输
+- **NAS 一体化**：OpenClaw Gateway 直接运行在 NAS 上，存储本地直读，3060 工作站通过 SMB 挂载写入
 - **飞书原生集成**：通过飞书对话即可操控 AI 助手，支持工具调用、文件搜索、视频总结等
 - **原生 Function Calling 插件**：通过自定义插件将 Skill 注册为原生工具，不依赖上下文，100% 确定性调用
-- **完整踩坑记录**：16 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
-- **硬件性能实测**：Surface Pro / 3060 工作站 / NAS 三机 CPU、内存、磁盘、Node.js 基准测试对比
+- **完整踩坑记录**：15 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
+- **NAS 作为主机的实践**：RK3588C ARM64 平台运行 OpenClaw + Node.js 的完整实战经验
 
 ---
 
@@ -31,14 +31,16 @@ graph TB
     subgraph LAN["🌐 局域网 192.168.x.x"]
         direction TB
 
-        subgraph SURFACE["🖥️ Surface Pro 5 — 调度中心"]
+        subgraph NAS["💾 绿联 NAS DH4300+ — 调度中心 + 存储"]
             direction TB
-            S_HW["i5-7300U / 8GB / 256GB SSD<br/>~5W 低功耗 · 7×24 运行"]
-            S1["OpenClaw Gateway"]
-            S_PLUGIN["custom-skills 插件<br/>5 个原生 Function Calling 工具"]
-            S2["Qwen3-32B 对话<br/>(阿里云 DashScope API)"]
-            S3["Nginx Web UI"]
-            S4["飞书 WebSocket"]
+            N_HW["RK3588C / 8GB / Debian 12<br/>3.6T + 1.8T 双卷 · 7×24 运行"]
+            N1["OpenClaw Gateway"]
+            N_PLUGIN["custom-skills 插件<br/>5 个原生 Function Calling 工具"]
+            N2["Qwen3-32B 对话<br/>(阿里云 DashScope API)"]
+            N3["Nginx Web UI"]
+            N4["飞书 WebSocket"]
+            N5["视频/音频/转写存档"]
+            N6["NAS 文件搜索（本地 find）"]
         end
 
         subgraph GPU["⚡ 3060 GPU 工作站 — 转写节点"]
@@ -48,25 +50,16 @@ graph TB
             G2["Whisper large-v3 转写"]
             G4["systemd 开机自启"]
         end
-
-        subgraph NAS["💾 绿联 NAS DH4300+ — 存储节点"]
-            direction TB
-            N_HW["RK3588C / 8GB<br/>3.6T + 1.8T 双卷"]
-            N1["视频/音频/转写存档"]
-            N2["NAS 文件搜索"]
-        end
     end
 
-    USER["👤 用户<br/>飞书 / Web UI"] -->|"对话请求"| S4
-    USER -->|"HTTPS"| S3
-    S1 -->|"HTTP :8090<br/>视频下载+转写"| G1
-    S1 -->|"SMB 挂载<br/>NAS 文件直接访问"| N2
-    G1 -->|"SMB 直写<br/>视频+转写结果"| N1
-    S2 -.->|"API 调用"| CLOUD["☁️ 阿里云 DashScope"]
+    USER["👤 用户<br/>飞书 / Web UI"] -->|"对话请求"| N4
+    USER -->|"HTTPS"| N3
+    N1 -->|"HTTP :8090<br/>视频下载+转写"| G1
+    G1 -->|"SMB 挂载<br/>视频+转写结果直写 NAS"| N5
+    N2 -.->|"API 调用"| CLOUD["☁️ 阿里云 DashScope"]
 
-    style SURFACE fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    style GPU fill:#fff3e0,stroke:#e65100,stroke-width:2px
     style NAS fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style GPU fill:#fff3e0,stroke:#e65100,stroke-width:2px
     style LAN fill:#fafafa,stroke:#999,stroke-width:1px
     style USER fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     style CLOUD fill:#fce4ec,stroke:#c62828,stroke-width:1px
@@ -77,21 +70,20 @@ graph TB
 ```mermaid
 sequenceDiagram
     participant U as 👤 用户 (飞书)
-    participant S as 🖥️ Surface Pro<br/>OpenClaw Gateway
+    participant N as 💾 NAS (DH4300+)<br/>OpenClaw Gateway
     participant G as ⚡ 3060 工作站<br/>GPU 转写
-    participant N as 💾 NAS (SMB 挂载)<br/>持久存储
 
-    U->>S: 发送 B站链接
-    S->>S: AI function call cw_bilibili_summary
-    S->>G: POST /api/transcribe (URL)
-    G->>N: yt-dlp 下载视频 → 直存 NAS
+    U->>N: 发送 B站链接
+    N->>N: AI function call cw_bilibili_summary
+    N->>G: POST /api/transcribe (URL)
+    G->>G: yt-dlp 下载视频
     G->>G: ffmpeg 提取音频 (本地临时)
     G->>G: Whisper large-v3 语音转写
-    G->>N: transcript.txt / .srt / info.json 写入 NAS
-    G-->>S: 返回转写文本 + 元数据
-    S->>S: Qwen API (云端) 生成结构化总结
-    S-->>U: 飞书回复视频总结
-    Note over U,N: 3060 负责 GPU 转写，OpenClaw 负责 AI 总结
+    G->>N: SMB 挂载直写：video + transcript.txt / .srt / info.json
+    G-->>N: 返回转写文本 + 元数据
+    N->>N: Qwen API (云端) 生成结构化总结
+    N-->>U: 飞书回复视频总结
+    Note over U,N: NAS 负责调度+存储，3060 负责 GPU 转写，Qwen API 负责 AI 总结
 ```
 
 ---
@@ -112,13 +104,12 @@ sequenceDiagram
 
 | 序号 | 文档 | 内容概述 |
 |:----:|------|----------|
-| 1 | **[环境构建与 API 配置](./docs/1_OpenClaw_Deploy_Guide.md)** | 选型对比、硬件准备、安装 OpenClaw、接入阿里云 Qwen3 |
-| 2 | [Surface Ubuntu 系统安装](./docs/2_Surface_Ubuntu_Setup.md) | Surface Pro 5 安装 Ubuntu 22.04 + linux-surface 内核 |
-| 3 | [Nginx HTTPS Web UI](./docs/3_OpenClaw_Nginx_WebUI.md) | Nginx 反向代理、自签名 SSL、局域网 Web UI 访问 |
-| 4 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
-| 5 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
-| 6 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、5 个工具实战、踩坑总结 |
-| — | **踩坑记录与时间线** | 16 个踩坑案例、最佳实践、部署时间线（29h）、功能路线图（见本文下方） |
+| 1 | **[环境构建与 API 配置](./docs/1_OpenClaw_Deploy_Guide.md)** | 选型对比、硬件准备、NAS 上安装 OpenClaw、接入阿里云 Qwen3 |
+| 2 | [Nginx HTTPS Web UI](./docs/3_OpenClaw_Nginx_WebUI.md) | Nginx 反向代理、自签名 SSL、局域网 Web UI 访问 |
+| 3 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
+| 4 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
+| 5 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、5 个工具实战、踩坑总结 |
+| — | **踩坑记录与时间线** | 15 个踩坑案例、最佳实践、部署时间线、功能路线图（见本文下方） |
 
 ---
 
@@ -145,25 +136,28 @@ openclaw agent --agent main --message "你好"
 
 | 设备 | 角色 | 规格 | 说明 |
 |------|------|------|------|
-| Surface Pro 5 | OpenClaw 调度中心 | i5-7300U / 8GB / 256GB SSD | 7×24 运行，Ubuntu 22.04 无桌面模式，功耗 ~5W |
-| RTX 3060 工作站 | GPU 推理节点 | i5-13490F / 32GB / RTX 3060 12GB | Whisper + LLM 总结，systemd 开机自启 |
-| 绿联 DH4300+ NAS | 持久化存储 | RK3588C / 8GB / 3.6T+1.8T 双卷 | 视频/音频/转写文本长期存储 |
+| 绿联 DH4300+ NAS | **OpenClaw 调度中心 + 持久存储** | RK3588C / 8GB / 3.6T+1.8T 双卷 | Debian 12，7×24 运行，Gateway + Nginx + 飞书 + 存储一体 |
+| RTX 3060 工作站 | GPU 推理节点 | i5-13490F / 32GB / RTX 3060 12GB | Whisper 转写，systemd 开机自启 |
 
-### NAS SMB 挂载
+### 为什么选 NAS 作为主机？
 
-NAS 通过 SMB 3.0 协议挂载到 Surface Pro 和 3060 工作站，两台机器统一挂载到 `/mnt/nas/` 路径下，文件可直接读写，无需 SCP/dd 传输。
+之前使用 Surface Pro 5 作为 OpenClaw Gateway 调度中心，但 2 核 4 线程的 i5-7300U 在启动多个服务时负载极高，触发 watchdog 反复重启，系统极不稳定。绿联 DH4300+ NAS（RK3588C 8 核 + 8GB 内存）本身就是 7×24 运行的设备，且 Debian 12 系统环境完整，磁盘 I/O 极强，非常适合作为常驻调度中心。
 
-| 本地挂载路径 | 用途 |
-|-------------|------|
-| `/mnt/nas/personal` | 个人文件（项目、文档、代码、视频转写存档） |
-| `/mnt/nas/movies` | 电影库 |
-| `/mnt/nas/photos` | 照片 |
-| `/mnt/nas/musics` | 音乐 |
-| `/mnt/nas/games` | 游戏 |
-| `/mnt/nas/downloads` | 下载目录 |
-| `/mnt/nas/docker` | Docker 数据 |
+### NAS 存储路径
 
-**挂载方式**：通过 `/etc/fstab` 配置 CIFS 自动挂载，两台机器配置相同。
+NAS 作为主机后，OpenClaw 直接读写本地存储，无需 SMB 挂载。3060 工作站通过 SMB 3.0 挂载 NAS 共享目录，转写结果直写 NAS。
+
+| NAS 本地路径 | 3060 挂载路径 | 用途 |
+|-------------|--------------|------|
+| `/volume1/personal` | `/mnt/nas/personal` | 个人文件（项目、文档、代码、视频转写存档） |
+| `/volume1/movies` | `/mnt/nas/movies` | 电影库 |
+| `/volume1/photos` | `/mnt/nas/photos` | 照片 |
+| `/volume1/musics` | `/mnt/nas/musics` | 音乐 |
+| `/volume1/games` | `/mnt/nas/games` | 游戏 |
+| `/volume1/downloads` | `/mnt/nas/downloads` | 下载目录 |
+| `/volume1/docker` | `/mnt/nas/docker` | Docker 数据 |
+
+**3060 工作站 SMB 挂载**：通过 `/etc/fstab` 配置 CIFS 自动挂载到 `/mnt/nas/`。
 
 **关键参数**：
 - `_netdev`：网络就绪后才挂载，防止开机时网络未通导致失败
@@ -174,14 +168,14 @@ NAS 通过 SMB 3.0 协议挂载到 Surface Pro 和 3060 工作站，两台机器
 
 **性能对比（实测）**：
 
-| 测试项 | Surface Pro | 3060 工作站 | NAS |
-|--------|:-----------:|:-----------:|:---:|
-| CPU 单核 (pi 5000位) | 191 ms | **85 ms** | 572 ms |
-| CPU 多核 (并行 gzip) | 971 ms (4核) | **538 ms (16核)** | 1888 ms (8核) |
-| Node.js (50M sqrt) | 682 ms | — | 1159 ms |
-| 磁盘写入 (256MB) | 101 MB/s | 280 MB/s | **2.1 GB/s** |
+| 测试项 | NAS (DH4300+) | 3060 工作站 |
+|--------|:-------------:|:-----------:|
+| CPU 单核 (pi 5000位) | 572 ms | **85 ms** |
+| CPU 多核 (并行 gzip) | 1888 ms (8核) | **538 ms (16核)** |
+| Node.js (50M sqrt) | 1159 ms | — |
+| 磁盘写入 (256MB) | **2.1 GB/s** | 280 MB/s |
 
-> **结论**：3060 工作站 CPU 性能最强（单核是 NAS 的 6.7 倍），但功耗高不适合 24/7 待机。Surface Pro 单核性能是 NAS 的 3 倍，配合 5W 低功耗，是 OpenClaw Gateway 的最佳载体。NAS 优势在磁盘 I/O 和存储空间，适合做数据节点。
+> **结论**：3060 工作站 CPU 性能最强（单核是 NAS 的 6.7 倍），适合 GPU 推理任务但功耗高不适合 24/7 待机。NAS 虽然 CPU 性能偏弱（ARM64 架构），但具有 **磁盘 I/O 极强（2.1 GB/s）、7×24 低功耗运行、存储空间充足（5.4T）** 三大优势，作为 OpenClaw Gateway 调度中心 + 数据存储一体机是最佳选择。Node.js 在 RK3588C 上运行 OpenClaw Gateway 完全可用，响应延迟主要取决于云端 Qwen API 而非本地 CPU。
 
 ---
 
@@ -401,69 +395,7 @@ ln -s ~/Desktop/4_openclaw/1_OpenClawProject/workspace/memory ~/.openclaw/worksp
 - **记忆文件对 14B 模型的影响比 32B 更大**。14B 上下文理解能力有限，容易被负面案例带偏
 - **建议**：如果使用记忆系统，只保留精简的**正面指引**，把踩坑细节放在开发文档（如本文）中供人类参考
 
-### 坑 10：watchdog 误杀 — 系统负载飙升触发无限重启
-
-**现象**：Surface Pro 每隔 2~20 分钟自动重启，一天重启 15+ 次，形成恶性循环。`last reboot` 输出密密麻麻：
-
-```
-reboot   system boot  Mon Feb  9 22:45 - 23:00  (00:15)
-reboot   system boot  Mon Feb  9 22:24 - 22:44  (00:20)
-reboot   system boot  Mon Feb  9 22:06 - 22:23  (00:17)
-...（一天 15+ 次）
-```
-
-**根本原因**：`watchdog` 服务的负载阈值设得太低，开机时多个服务同时启动导致负载飙升超过阈值，watchdog 强制重启：
-
-```
-watchdog[1016]: loadavg 25 18 9 is higher than the given threshold 24 18 12!
-watchdog[1016]: shutting down the system because of error 253 = 'load average too high'
-```
-
-原始配置 `/etc/watchdog.conf` 中 `max-load-1 = 24`，而 Surface Pro 的 i5-7300U 只有 2 核 4 线程，开机时 OpenClaw Gateway（90% CPU）+ Cursor Server（60% CPU）+ temp_monitor 叠加实例（34% CPU）轻松突破这个阈值。
-
-**恶性循环**：启动 → 负载飙升 → watchdog 触发重启 → 再启动 → 负载再飙 → 再重启...
-
-**解决**：大幅提高 watchdog 负载阈值（温度保护保留）：
-
-```ini
-# /etc/watchdog.conf
-max-load-1 = 80
-max-load-5 = 60
-max-load-15 = 40
-temperature-sensor = /sys/class/thermal/thermal_zone6/temp
-max-temperature = 90   # 温度保护保留
-```
-
-**修复效果**：负载从 25 降至 2.9，系统稳定运行不再被误杀。
-
-> **教训**：在资源有限的设备上部署多个常驻服务时，务必检查 watchdog 负载阈值。Surface Pro 这种无风扇 2 核设备，启动时负载波动极大，默认阈值很容易触发。**温度保护比负载保护更重要**——过热真的会损坏硬件，而高负载只是暂时的。
-
-### 坑 11：cron 脚本无锁 → 进程叠加 → CPU 爆炸
-
-**现象**：`ps aux` 发现 `temp_monitor_feishu.sh` 有 **4+ 个实例**同时运行，每个占 16~19% CPU，叠加后消耗 >60% CPU，是坑 10 负载飙升的主要帮凶。
-
-**原因**：cron 每分钟启动一次脚本（`* * * * *`），但脚本内有耗时操作（CSV 汇总 `tail | awk`），执行时间 >60 秒。上一个实例还没结束，下一个就启动了，不断叠加。
-
-**解决**：在脚本开头加 lockfile 防重叠机制：
-
-```bash
-# 防止重叠运行
-LOCKFILE="/tmp/.temp_monitor.lock"
-if [ -f "$LOCKFILE" ]; then
-    LOCK_PID=$(cat "$LOCKFILE" 2>/dev/null)
-    if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
-        exit 0  # 上一个实例还在运行，静默退出
-    fi
-fi
-echo $$ > "$LOCKFILE"
-trap "rm -f $LOCKFILE" EXIT
-```
-
-**修复效果**：同一时刻只有 1 个实例运行，CPU 占用从 >60% 降至 ~19%。
-
-> **教训**：**任何 cron 调度的脚本都应该加锁机制**，尤其是执行时间可能超过调度间隔的脚本。这是 Linux 运维的经典陷阱。推荐方案：lockfile + PID 检查 + `trap` 清理。
-
-### 坑 12：nativeSkills 导致 14B 模型 Skill 调用失败
+### 坑 10：nativeSkills 导致 14B 模型 Skill 调用失败
 
 **现象**：用户在飞书问"看一下温度"或"你是什么硬件配置"，AI 回复"当前无法直接获取温度信息，您可以手动执行 `sudo sensors`..."，完全不触发 `system_info` Skill。同样的问题在 32B 模型上正常。
 
@@ -509,7 +441,7 @@ nohup openclaw gateway --force > /tmp/openclaw_restart.log 2>&1 &
 > - **小模型用 `nativeSkills: false`，大模型可用 `"auto"`**。32B 能正确理解两层工具调用的关系
 > - **排查 Skill 不触发时，先看日志中 `tool start/end` 的序列**，确认是 native tool 被调用还是 exec 被调用
 
-### 坑 13：系统提示过大 + 会话历史溢出（14B 上下文崩溃）
+### 坑 11：系统提示过大 + 会话历史溢出（14B 上下文崩溃）
 
 **现象**：发送任何消息到 OpenClaw，立刻返回 HTTP 400 错误：
 ```
@@ -553,9 +485,9 @@ openclaw gateway stop && sleep 2 && openclaw gateway start
 > - 会话文件 (`.jsonl`) 是累积增长的，**必须定期清理**。建议超过 50KB 时备份重置
 > - `sessions.json` 中的 `skillsSnapshot` 是缓存，修改 SKILL.md 后需删除此文件让系统重新加载
 
-### 坑 14：Skill 上下文依赖 → 自定义插件原生 function calling
+### 坑 12：Skill 上下文依赖 → 自定义插件原生 function calling
 
-**现象**：经历坑 12 和坑 13 的修复后，Skill 仍然不稳定——有时模型能调用，有时就忘了。尤其是切换到 32B 模型后，问题依旧：
+**现象**：经历坑 10 和坑 11 的修复后，Skill 仍然不稳定——有时模型能调用，有时就忘了。尤其是切换到 32B 模型后，问题依旧：
 
 1. `nativeSkills: "auto"` → 模型报 `"Tool nas_search not found"`（自定义 Skill 并未注册为原生工具）
 2. `nativeSkills: false` → 依赖模型 `read` SKILL.md 然后 `exec`，但模型经常跳过 `read`，直接猜命令
@@ -650,7 +582,7 @@ openclaw plugins doctor
 > - 插件工具命名建议加前缀（如 `cw_`），避免与核心工具冲突
 > - 详细的插件开发指南见 [原生工具插件开发](./docs/6_OpenClaw_Native_Tools_Plugin.md)
 
-### 坑 15：execSync 阻塞事件循环 → bilibili_summary 工具调用被截断
+### 坑 13：execSync 阻塞事件循环 → bilibili_summary 工具调用被截断
 
 **现象**：通过飞书发送 B 站视频链接后，AI 回复"正在处理，预计 3-5 分钟"，然后**永远不再回复**。多次重试均相同，`/reset` 命令也无响应。
 
@@ -730,9 +662,9 @@ async execute(_id: string, params: { url: string; lang?: string }) {
 > - 长时间运行的工具必须用异步 `exec` + `maxBuffer`（默认 1MB 不够大，转写文本可达数 MB）
 > - 同步执行（`runScript` / `execSync`）保留给 < 60s 的短命令即可
 
-### 坑 16：SSH 串联 NAS 经常断连 → 改用 SMB 挂载
+### 坑 14：SSH 串联 NAS 经常断连 → 改用 SMB 挂载
 
-**现象**：早期架构中，Surface Pro 和 3060 工作站通过 SSH 访问 NAS 上的文件（`ssh nas 'cat /path/file'`、`cat file | ssh nas 'dd of=...'`）。但在实际运行中，SSH 连接**频繁出现以下问题**：
+**现象**：早期架构中，3060 工作站通过 SSH 访问 NAS 上的文件（`ssh nas 'cat /path/file'`、`cat file | ssh nas 'dd of=...'`）。但在实际运行中，SSH 连接**频繁出现以下问题**：
 
 | 问题 | 表现 |
 |------|------|
@@ -746,7 +678,7 @@ async execute(_id: string, params: { url: string; lang?: string }) {
 
 **根本原因**：绿联 NAS（DH4300+）的 SSH 服务是轻量级实现（BusyBox），不是完整的 OpenSSH，连接稳定性和功能完整性都不如标准 Linux 服务器。
 
-**解决方案**：将 NAS 通过 **SMB 3.0 协议挂载**到 Surface Pro 和 3060 工作站的 `/mnt/nas/`，文件操作变成本地目录读写：
+**解决方案**：将 NAS 通过 **SMB 3.0 协议挂载**到 3060 工作站的 `/mnt/nas/`，文件操作变成本地目录读写（NAS 作为主机后本身直接读写本地存储）：
 
 | 维度 | SSH 方式 | SMB 挂载方式 |
 |------|---------|-------------|
@@ -761,9 +693,60 @@ async execute(_id: string, params: { url: string; lang?: string }) {
 
 > **教训**：
 > - 家用 NAS 的 SSH 服务不可信赖，尤其是 ARM 方案 NAS（如绿联、群晖入门款），BusyBox shell 兼容性有限
-> - **SMB 挂载是连接 NAS 的最佳方式**——内核级实现、协议成熟、中文路径兼容、开机自动可用
-> - `cw_nas_search` 仍保留 SSH 方式做深度搜索（`find`/`du` 命令在 NAS 本地执行更快），但文件读写一律走 SMB
-> - 统一挂载路径（`/mnt/nas/`）写入 TOOLS.md，让 AI 也知道正确的访问方式
+> - **SMB 挂载是 3060 工作站连接 NAS 的最佳方式**——内核级实现、协议成熟、中文路径兼容、开机自动可用
+> - NAS 作为主机后，`cw_nas_search` 直接在本地执行 `find`/`du`（无需 SSH），性能更优
+> - 3060 统一挂载路径（`/mnt/nas/`）写入 TOOLS.md，让 AI 知道正确的访问方式
+
+### 坑 15：NAS ARM64 平台 Node.js 安装踩坑（apt 依赖冲突 → nvm 救场）
+
+**现象**：在绿联 NAS（Debian 12 / UGOS / aarch64）上通过 NodeSource 安装 Node.js 22 时，`apt-get install nodejs` 报大量依赖冲突：
+
+```
+The following packages have unmet dependencies:
+ nodejs : Depends: libc6 (>= 2.35) but 2.36-9+deb12u9 is to be installed
+          Depends: libstdc++6 (>= 12) but 13.2.0-13 is to be installed
+...（十几行 unmet dependencies）
+```
+
+`apt --fix-broken install` 也无法解决，因为 UGOS 的 apt 源和 NodeSource 的 aarch64 包存在版本不兼容。
+
+**原因**：绿联 NAS 的 UGOS 基于 Debian 12 但做了定制，apt 包版本与标准 Debian 12 仓库不完全一致。NodeSource 的 Node.js 22 预编译包依赖特定版本的 libc6/libstdc++6，与系统实际版本冲突。
+
+**解决**：放弃 apt，使用 **nvm（Node Version Manager）** 在用户空间安装 Node.js：
+
+```bash
+# 安装 nvm（如果 GitHub 无法访问，可用镜像）
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+source ~/.bashrc
+
+# 安装 Node.js 22（nvm 会自动下载对应 aarch64 的预编译包）
+nvm install 22
+
+# 配置 npm 国内镜像（加速后续安装）
+npm config set registry https://registry.npmmirror.com
+
+# 安装 OpenClaw
+npm install -g openclaw
+```
+
+**额外注意**：nvm 安装的 Node.js 在 `nohup` 或 `cron` 中可能找不到，需要在启动脚本中显式加载 nvm 环境：
+
+```bash
+#!/bin/bash
+# ~/.openclaw/start-gateway.sh
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+[ -f "$HOME/.openclaw/env" ] && source "$HOME/.openclaw/env"
+exec openclaw gateway --port 18789
+```
+
+**OpenClaw CLI 在 ARM64 上极慢**：`openclaw config set` / `openclaw models set` 等命令可能需要 30 秒以上甚至卡死。解决方法：**直接编辑 `~/.openclaw/openclaw.json`**，比 CLI 快得多且更可控。
+
+> **教训**：
+> - ARM64 NAS 上不要用 apt 装 Node.js，nvm 是最省心的方案
+> - nvm 安装的 Node.js 不在系统 PATH 中，所有后台启动脚本必须先 `source nvm.sh`
+> - ARM64 上 OpenClaw CLI 交互命令很慢，**直接编辑 JSON 配置文件**是更好的选择
+> - npm 国内镜像（npmmirror.com）是 ARM64 NAS 的救命稻草——GitHub 和 npm 官方源在 NAS 上经常超时
 
 ---
 
@@ -833,7 +816,6 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | **MEMORY.md 只写正面指引** | 踩坑细节写开发文档，给 AI 的记忆只保留"正确做法"，避免负面案例误导 14B 模型 |
 | **systemd 服务不要手动启动** | AI 和脚本都应通过 `systemctl restart` 而非 `python3 server.py` 来管理服务 |
 | **cron 脚本必须加锁** | 用 lockfile + PID 检查防止进程叠加，尤其是执行时间可能超过调度间隔的脚本 |
-| **检查 watchdog 阈值** | 无风扇低配设备启动时负载波动大，`max-load-1` 设太低会导致无限重启。温度保护比负载保护更重要 |
 | **14B 关 nativeSkills** | `commands.nativeSkills: false`，防止 Skill 注册为同名工具导致 14B 混乱。32B 可用 `"auto"` |
 | **精简系统提示** | 14B 注意力有限，system prompt 控制在 ~8K tokens 以内。去掉 Group Chat/Heartbeat 等不相关段落 |
 | **定期清理会话** | `sessions/*.jsonl` 超过 50KB 应备份清理，否则累积上下文溢出 DashScope 98K 限制 |
@@ -841,11 +823,13 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | **用插件注册原生工具** | 自定义 Skill 通过插件 `api.registerTool()` 注册为 function calling 工具，不依赖上下文，100% 确定性调用 |
 | **插件不跟随 symlink** | 插件目录不能用符号链接，需通过 `plugins.load.paths` 指向 Git 项目路径 |
 | **工具名加前缀** | 插件工具命名加 `cw_` 前缀避免与核心工具冲突（如 `cw_system_info` 而非 `system_info`） |
-| **NAS SMB 挂载写入 TOOLS.md** | AI 必须知道 NAS 挂载映射（如 `/mnt/nas/personal` = 个人文件），否则会猜错路径 |
-| **NAS 简单访问不用工具** | 文件路径明确时直接 `exec`/`read` 访问 `/mnt/nas/`，只有深度搜索才用 `cw_nas_search` |
+| **NAS 本地路径写入 TOOLS.md** | AI 必须知道 NAS 存储路径映射（如 `/volume1/personal` = 个人文件），否则会猜错路径 |
+| **NAS 简单访问不用工具** | 文件路径明确时直接 `exec`/`read` 访问本地存储路径，只有深度搜索才用 `cw_nas_search` |
 | **转写与总结解耦** | GPU 节点只做 Whisper 转写（擅长的事），AI 总结交给云端 Qwen API，各司其职 |
-| **产出文件直写 NAS** | 3060 和 Surface 统一 SMB 挂载 `/mnt/nas/`，不再用 SSH+dd 传输，减少出错点 |
-| **NAS 用 SMB 挂载不用 SSH** | 家用 NAS（绿联/BusyBox）的 SSH 不稳定，SMB 3.0 挂载内核级实现更可靠，中文路径兼容 |
+| **产出文件直写 NAS** | 3060 通过 SMB 挂载 `/mnt/nas/` 直写 NAS，NAS 本地直接读写，不再用 SSH+dd 传输 |
+| **3060 用 SMB 挂载访问 NAS** | 3060 工作站通过 SMB 3.0 挂载 `/mnt/nas/`，转写结果直写 NAS，不用 SSH 传输 |
+| **ARM64 NAS 用 nvm 装 Node.js** | apt 方式在 UGOS 上有依赖冲突，nvm 在用户空间安装最省心。后台脚本需 `source nvm.sh` |
+| **ARM64 上直接编辑 JSON** | OpenClaw CLI 在 ARM64 上极慢，`openclaw config set` 可能卡死。直接编辑 `openclaw.json` 更快更可控 |
 | **Gateway restart 要先 stop** | `systemctl --user restart` 有时杀不干净旧进程，导致端口占用无限重启。稳妥做法：先 `stop` → 确认进程已退出 → 再 `start` |
 
 ---
@@ -854,56 +838,50 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 
 | 状态 | 时间 | 里程碑 |
 |:----:|------|--------|
-| ✅ | 2026-02-08 17:00 | 安装 OpenClaw，配置阿里云 DashScope API |
+| ✅ | 2026-02-08 17:00 | 在 NAS 上安装 OpenClaw，配置阿里云 DashScope API |
 | ✅ | 2026-02-08 17:30 | 配置飞书双向机器人（企业自建应用 + WebSocket 长连接） |
 | ✅ | 2026-02-08 18:00 | 配置 Nginx HTTPS 反向代理，局域网 Web UI 可访问 |
 | ✅ | 2026-02-08 18:30 | 自定义 Workspace（SOUL.md / IDENTITY.md / TOOLS.md） |
 | ✅ | 2026-02-08 19:00 | 测试 Qwen3 模型（4B / 14B / 32B），确定 14B 为默认 |
-| ✅ | 2026-02-08 21:00 | 开发 system_info Skill，AI 可读取本机硬件/软件信息 |
+| ✅ | 2026-02-08 21:00 | 开发 system_info Skill，AI 可读取 NAS 硬件/软件信息 |
 | ✅ | 2026-02-08 21:30 | 模型对比实测：验证 14B 的工具调用能力 |
 | ✅ | 2026-02-08 22:00 | 整理项目结构，初始化 Git 仓库，撰写本文 |
 | ✅ | 2026-02-08 22:30 | 配置记忆系统（MEMORY.md + 每日日志） |
 | ✅ | 2026-02-08 23:00 | 修复 IM 消息不回复问题（session channel 错配） |
-| ✅ | 2026-02-08 23:30 | 配置 sudo 支持，AI 可直接安装软件、查询 SSD 健康等 |
+| ✅ | 2026-02-08 23:30 | 配置 sudo 支持，AI 可直接安装软件、查询系统状态 |
 | ⏳ | 2026-02-09 00:00 | 部署 Mi-GPT，小爱音箱 Play 接入（等待小米账号验证） |
 | ✅ | 2026-02-09 00:30 | 重置会话历史（清除旧模型引用，修复 AI 自称 4B 问题） |
-| ✅ | 2026-02-09 01:50 | 开发 weather Skill：IP 定位 + wttr.in 天气查询 + 飞书每 2 小时定时推送 |
+| ✅ | 2026-02-09 01:50 | 开发 weather Skill：天气查询 + 飞书每 2 小时定时推送 |
 | ✅ | 2026-02-09 02:20 | 开发 personal_info Skill：导入个人 Q&A 数据集，AI 可回答主人相关问题 |
-| ✅ | 2026-02-09 02:50 | 开发 doge5l_monitor + temp_monitor Skill（后续已撤回，改为独立运行） |
-| ✅ | 2026-02-09 12:00 | 撤回 doge5l_monitor / temp_monitor 独立 Skill，清理 OpenClaw 残留 |
-| ✅ | 2026-02-09 12:25 | 温度监控集成到 system_info，通过 `sensors` 命令实时采集（不再依赖外部 CSV） |
-| ✅ | 2026-02-09 12:30 | 重构 Skill 文档：精简总览、统一章节编号、删除已撤回内容 |
+| ✅ | 2026-02-09 12:30 | 重构 Skill 文档：精简总览、统一章节编号 |
 | ✅ | 2026-02-09 14:00 | 开发 bilibili_summary Skill v1~v3：架构演进（本地全流程 → 3060 工作站 FastAPI 服务） |
-| ✅ | 2026-02-09 17:00 | bilibili_summary v4~v5：3060 工作站服务新增 Qwen3-32B LLM 总结，NAS dd 传输修复 |
-| ✅ | 2026-02-09 19:00 | 3060 工作站 FastAPI systemd 开机自启、UFW 防火墙、NAS `cat\|ssh dd` 传输修复 |
-| ✅ | 2026-02-09 20:00 | 更新 Workspace（TOOLS.md / USER.md / MEMORY.md）+ Git 推送双仓库 |
+| ✅ | 2026-02-09 17:00 | bilibili_summary v4~v5：3060 工作站服务新增 Qwen3-32B LLM 总结，NAS 传输修复 |
+| ✅ | 2026-02-09 19:00 | 3060 工作站 FastAPI systemd 开机自启、UFW 防火墙 |
+| ✅ | 2026-02-09 20:00 | 更新 Workspace（TOOLS.md / USER.md / MEMORY.md）+ Git 推送 |
 | ✅ | 2026-02-09 21:00 | 更新 Skills 文档：新增"为什么用本地 Whisper"章节、修复 Mermaid 架构图 |
 | ✅ | 2026-02-09 22:00 | 排查 AI 死循环问题（坑 8 + 坑 9）：清除被污染的会话 + 移除 MEMORY.md |
-| ✅ | 2026-02-09 22:55 | **bilibili_summary 端到端验证成功**：飞书发链接 → AI 匹配 Skill → exec 脚本 → 3060 工作站处理 114.6s → 飞书回复总结 |
-| ✅ | 2026-02-09 19:30 | 项目目录整理：OpenClaw 配置仓库迁移至 `4_openclaw/1_OpenClawProject`，修复全部 17 个符号链接 |
-| ✅ | 2026-02-09 19:50 | 恢复 system_info / weather / personal_info 三个自定义 Skill（迁移时丢失） |
-| ✅ | 2026-02-09 23:03 | **修复 Surface 无限重启问题**（坑 10 + 坑 11）：watchdog 阈值调整 + temp_monitor 加锁 |
-| ✅ | 2026-02-10 03:20 | 开发 qwen_usage Skill → 独立为 `1_monitor/scripts/qwen_billing/` 脚本（解耦 OpenClaw） |
-| ✅ | 2026-02-10 03:23 | 发现并修复 **nativeSkills 导致 14B Skill 失效**（坑 12）：`nativeSkills: false` |
-| ✅ | 2026-02-10 12:50 | **系统提示瘦身**：AGENTS.md 230→40 行、5 个 SKILL.md 总计 243→129 行，上下文从 23KB 降至 11KB（减少 53%） |
-| ✅ | 2026-02-10 13:00 | 迁移遗漏修复：TOOLS.md 符号链接化 + USER.md 断链修复 + IDENTITY.md NAS 描述更正 |
-| ✅ | 2026-02-10 13:07 | 清理 584KB 过大会话文件（坑 13），修复 DashScope `input length > 98304` 溢出错误 |
-| ✅ | 2026-02-10 14:30 | **自定义插件原生 function calling**（坑 14）：开发 `custom-skills` 插件，5 个 Skill 全部注册为原生工具 |
-| ✅ | 2026-02-10 14:30 | 通过 `plugins.load.paths` 从 Git 项目目录加载插件（符号链接不可用） |
-| ✅ | 2026-02-10 14:35 | 精简 TOOLS.md：移除 exec 命令速查（不再需要），改为列出原生工具名 |
+| ✅ | 2026-02-09 22:55 | **bilibili_summary 端到端验证成功**：飞书发链接 → AI 匹配 Skill → 3060 工作站处理 114.6s → 飞书回复总结 |
+| ✅ | 2026-02-10 03:20 | 开发 qwen_usage Skill → 独立为脚本（解耦 OpenClaw） |
+| ✅ | 2026-02-10 03:23 | 发现并修复 **nativeSkills 导致 14B Skill 失效**（坑 10）：`nativeSkills: false` |
+| ✅ | 2026-02-10 12:50 | **系统提示瘦身**：AGENTS.md 230→40 行、5 个 SKILL.md 总计 243→129 行，上下文减少 53% |
+| ✅ | 2026-02-10 13:07 | 清理 584KB 过大会话文件（坑 11），修复 DashScope `input length > 98304` 溢出错误 |
+| ✅ | 2026-02-10 14:30 | **自定义插件原生 function calling**（坑 12）：开发 `custom-skills` 插件，5 个 Skill 全部注册为原生工具 |
 | ✅ | 2026-02-10 14:40 | 端到端验证：5 个技能全部通过 function calling 调用成功 |
-| ✅ | 2026-02-10 14:45 | **天气功能解耦**：weather 采集/推送迁移到 `1_monitor/scripts/weather/`，cw_weather 改读 CSV |
-| ✅ | 2026-02-10 15:42 | **修复 bilibili_summary 工具调用被截断**（坑 15）：`execSync` → 异步 `exec`，解决事件循环阻塞 |
-| ✅ | 2026-02-10 16:00 | **NAS 路径优化**：TOOLS.md 添加 NAS SMB 挂载映射表，`cw_nas_search` 重新定位为"深度搜索"工具 |
+| ✅ | 2026-02-10 14:45 | **天气功能解耦**：weather 采集/推送迁移为独立脚本，cw_weather 改读 CSV |
+| ✅ | 2026-02-10 15:42 | **修复 bilibili_summary 工具调用被截断**（坑 13）：`execSync` → 异步 `exec`，解决事件循环阻塞 |
+| ✅ | 2026-02-10 16:00 | **NAS 路径优化**：`cw_nas_search` 改为本地 find（无需 SSH），重新定位为"深度搜索"工具 |
 | ✅ | 2026-02-10 16:20 | **bilibili_summary v6 架构重构**：3060 只做下载+转写（存 NAS），AI 总结改用 OpenClaw Qwen API（云端） |
-| ✅ | 2026-02-10 16:20 | 3060 `server.py` v2.0 已移除 Qwen3-32B 本地总结，全部产出直接 SMB 写入 NAS |
-| ❌ | 2026-02-10 16:45 | **bilibili 纯 API 备用链路调研后放弃**：DashScope Paraformer 不支持本地文件，需 OSS 中转，链路复杂且额外付费，3060 方案已满足需求 |
+| ❌ | 2026-02-10 16:45 | **bilibili 纯 API 备用链路调研后放弃**：DashScope Paraformer 不支持本地文件，需 OSS 中转，3060 方案已满足需求 |
+| ✅ | 2026-02-10 21:00 | **架构迁移：Surface Pro → NAS**：放弃不稳定的 Surface Pro，在绿联 NAS 上通过 nvm 安装 Node.js 22 + OpenClaw（坑 15） |
+| ✅ | 2026-02-10 22:00 | **NAS 端全量配置恢复**：DashScope Qwen3 API + 飞书 WebSocket 机器人 + 5 个原生工具插件 |
+| ✅ | 2026-02-10 22:30 | **NAS 端到端验证成功**：飞书收发消息正常，AI 通过 Qwen3-14B 回复，飞书文档/Wiki/多维表格工具已加载 |
+| ✅ | 2026-02-10 23:00 | 更新全部文档：README.md 架构图重绘、踩坑记录更新、部署指南适配 NAS |
 
-> 从零到功能完备的 OpenClaw 私人 AI 助手，总计约 **29 小时**（还在持续进化中）。
+> 从零到功能完备的 OpenClaw 私人 AI 助手（还在持续进化中）。
 >
-> **2/9 回顾**：完成了 bilibili_summary — 第一个 API 服务型 Skill，实现三机协同（Surface Pro + 3060 工作站 + NAS）的分布式架构。过程中踩了多个坑（NAS 传输、端口冲突、Qwen3 API、对话历史污染），均已解决并记录。最终端到端验证成功：飞书发送B站链接 → AI 自动匹配 Skill → 执行脚本 → 3060 工作站完成下载+转写+总结 → AI 回复飞书用户。晚间还修复了 Surface Pro 因 watchdog + cron 脚本叠加导致的无限重启问题（坑 10 + 坑 11），系统负载从 25 降至 2.9，恢复稳定。
+> **2/9 回顾**：完成了 bilibili_summary — 第一个 API 服务型 Skill，实现双机协同（NAS + 3060 工作站）的分布式架构。过程中踩了多个坑（NAS 传输、端口冲突、Qwen3 API、对话历史污染），均已解决并记录。最终端到端验证成功：飞书发送B站链接 → AI 自动匹配 Skill → 3060 工作站完成下载+转写 → OpenClaw Qwen API 总结 → AI 回复飞书用户。
 >
-> **2/10 回顾**：经历了 qwen_usage Skill 开发全过程（阿里云 BSS OpenAPI 账单查询），最终将其从 OpenClaw 解耦为独立脚本。发现并修复了坑 12（nativeSkills）和坑 13（上下文溢出）。最重要的突破是**坑 14**：深入分析 OpenClaw 源码后发现，Skill 的上下文注入机制对 14B/32B 模型都不够可靠，`nativeSkills` 配置也并非 function calling 而只是平台斜杠命令。最终通过**插件系统 `api.registerTool()`** 将 6 个自定义 Skill 注册为原生 function calling 工具，实现了**不依赖上下文的确定性调用**。下午进行了两项架构优化：(1) **NAS 路径映射**——TOOLS.md 写入完整 SMB 挂载表，AI 不再对 NAS 路径猜测，`cw_nas_search` 重新定位为 SSH 深度搜索；(2) **bilibili_summary v6**——3060 不再做 AI 总结，只负责下载+Whisper 转写（全部直写 NAS），总结改由 OpenClaw 的 Qwen API（云端）完成，实现转写与总结的解耦。
+> **2/10 回顾**：发现并修复了坑 10（nativeSkills）和坑 11（上下文溢出）。最重要的突破是**坑 12**：深入分析 OpenClaw 源码后发现，Skill 的上下文注入机制对 14B/32B 模型都不够可靠，最终通过**插件系统 `api.registerTool()`** 将 5 个自定义 Skill 注册为原生 function calling 工具，实现了**不依赖上下文的确定性调用**。架构优化：NAS 作为主机后 `cw_nas_search` 改为本地 `find` 执行（无需 SSH），bilibili_summary v6 实现转写与总结解耦。晚间完成**架构迁移**：彻底放弃不稳定的 Surface Pro，在绿联 NAS 上通过 nvm 安装 Node.js 22 + OpenClaw，恢复全部配置并验证成功。
 
 ---
 
@@ -911,18 +889,18 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 
 | 状态 | 功能 | 说明 |
 |:----:|------|------|
-| ✅ | OpenClaw 基础部署 | 安装 + 配置 Qwen3-14B + Gateway |
+| ✅ | OpenClaw 基础部署 | NAS 上安装 + 配置 Qwen3-14B + Gateway |
 | ✅ | 飞书双向机器人 | 企业自建应用 + WebSocket 长连接，主要 IM 渠道 |
 | ✅ | Nginx HTTPS | 局域网 Web UI（端口 7860） |
-| ✅ | system_info Skill | AI 读取硬件/软件/网络信息 + sensors 实时硬件温度 |
-| ✅ | sudo 命令执行 | AI 可安装软件、查询 SSD 健康、管理服务 |
+| ✅ | system_info Skill | AI 读取 NAS 硬件/软件/网络信息 |
+| ✅ | sudo 命令执行 | AI 可管理 NAS 服务、查询系统状态 |
 | ✅ | 记忆系统 | MEMORY.md 长期记忆 + 每日日志 |
-| ✅ | weather Skill | IP 定位 + wttr.in 天气查询 + 飞书每 2 小时推送 |
-| ✅ | nas_search Skill | NAS 深度搜索（SSH 搜索比 SMB 快 10x+），简单文件访问直接走 SMB 挂载 |
-| ✅ | bilibili_summary Skill | B站视频：3060 下载到 NAS → Whisper GPU 转写 → OpenClaw Qwen API 总结 |
+| ✅ | weather Skill | 天气查询 + 飞书每 2 小时推送 |
+| ✅ | nas_search Skill | NAS 本地深度搜索（`find`/`du` 直接执行），简单文件访问直接读本地路径 |
+| ✅ | bilibili_summary Skill | B站视频：3060 下载+转写 → NAS 存储 → OpenClaw Qwen API 总结 |
 | ✅ | **原生 Function Calling 插件** | 5 个 Skill 注册为 `cw_*` 原生工具，不依赖上下文，100% 确定性调用 |
 | ⏳ | 小爱音箱语音交互 | Mi-GPT 已部署，等待小米账号安全验证生效 |
-| ❌ | bilibili 纯 API 备用链路 | 调研后放弃：DashScope Paraformer 不支持本地文件直传，需开通 OSS 中转，链路复杂收益低，3060 方案已足够 |
+| ❌ | bilibili 纯 API 备用链路 | 调研后放弃：DashScope Paraformer 不支持本地文件直传，3060 方案已足够 |
 | 📋 | 更多 Skill | 日程管理、Docker 管理、智能家居 |
 | 📋 | Heartbeat 定时任务 | AI 主动推送日历提醒 |
 | 📋 | MCP Server 集成 | 通过 Model Context Protocol 接入外部工具 |
@@ -930,7 +908,6 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | 📋 | Home Assistant 联动 | AI 控制智能家居 |
 | 📋 | 知识库 RAG | 私有文档库问答 |
 | 📋 | 自动化工作流 | AI 监控邮件/代码仓库/服务器 |
-| 📋 | 迁移到专用服务器 | 从 Surface Pro 迁移到 NAS 或云服务器 |
 
 > ✅ = 已完成 &nbsp; ⏳ = 进行中 &nbsp; 📋 = 待完成
 
@@ -943,12 +920,11 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 - [OpenClaw Manager 桌面版](https://github.com/miaoxworld/openclaw-manager)
 - [阿里云 DashScope](https://dashscope.console.aliyun.com/)
 - [DashScope OpenAI 兼容模式文档](https://help.aliyun.com/zh/model-studio/developer-reference/compatibility-of-openai-with-dashscope)
-- [linux-surface 内核](https://github.com/linux-surface/linux-surface)
 - [飞书开放平台](https://open.feishu.cn/)
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 
 ---
 
-> **撰写日期**：2026 年 2 月 8~10 日
+> **撰写日期**：2026 年 2 月 8~10 日（持续更新中）
 >
 > 如有问题欢迎评论交流！
