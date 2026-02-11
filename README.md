@@ -18,7 +18,7 @@
 - **系统提示词精简实战**：从 34 工具 → 23 工具，完整裁剪决策记录（含本地 8B 模型阶段的经验）
 - **Docker 隔离部署**：非 root + cap_drop ALL + no-new-privileges + exec 白名单，启动自动通知飞书
 - **exec 审批系统实战**：allowlist 白名单 + safeBins + askFallback 配置，Docker 非交互模式下的踩坑与解决
-- **完整踩坑记录**：15+ 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
+- **完整踩坑记录**：17 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
 - **NAS 作为主机的实践**：RK3588C ARM64 平台运行 OpenClaw + Node.js + Docker 的完整实战经验
 - **模型演进全记录**：从云端 14B → 本地 8B（vLLM）→ 回归云端 14B，完整记录各阶段的取舍与经验
 
@@ -81,7 +81,7 @@ sequenceDiagram
 | 3 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
 | 4 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
 | 5 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、踩坑总结（自定义工具已清理，保留框架） |
-| — | **踩坑记录与时间线** | 15+ 个踩坑案例、最佳实践、部署时间线、裁剪决策记录、功能路线图（见本文下方） |
+| — | **踩坑记录与时间线** | 17 个踩坑案例、最佳实践、部署时间线、裁剪决策记录、功能路线图（见本文下方） |
 
 ---
 
@@ -117,25 +117,25 @@ openclaw agent --agent main --message "你好"
 
 ### NAS 存储路径
 
-NAS 作为主机后，OpenClaw 直接读写本地存储，无需 SMB 挂载。3060 工作站通过 SMB 3.0 挂载 NAS 共享目录，转写结果直写 NAS。
+NAS 双卷存储，OpenClaw Docker 容器通过只读挂载访问：
 
-| NAS 本地路径 | 3060 挂载路径 | 用途 |
-|-------------|--------------|------|
-| `/volume1/personal` | `/mnt/nas/personal` | 个人文件（项目、文档、代码、视频转写存档） |
-| `/volume1/movies` | `/mnt/nas/movies` | 电影库 |
-| `/volume1/photos` | `/mnt/nas/photos` | 照片 |
-| `/volume1/musics` | `/mnt/nas/musics` | 音乐 |
-| `/volume1/games` | `/mnt/nas/games` | 游戏 |
-| `/volume1/downloads` | `/mnt/nas/downloads` | 下载目录 |
-| `/volume1/docker` | `/mnt/nas/docker` | Docker 数据 |
+| NAS 本地路径 | 容器内路径 | 用途 |
+|-------------|-----------|------|
+| `/volume2/Movies` | `/nas/volume2/Movies` | 电影库 |
+| `/volume2/Photos` | `/nas/volume2/Photos` | 照片 |
+| `/volume2/Musics` | `/nas/volume2/Musics` | 音乐 |
+| `/volume2/Games` | `/nas/volume2/Games` | 游戏 |
+| `/volume2/迅雷下载` | `/nas/volume2/迅雷下载` | 迅雷下载 |
+| `/volume1/@home/cw` | `/nas/volume1/@home/cw` | 用户主目录 |
 
-**3060 工作站 SMB 挂载**：通过 `/etc/fstab` 配置 CIFS 自动挂载到 `/mnt/nas/`。
+> **注意**：绿联 UGOS 的用户目录默认权限为 `d---------+`（ACL 管理），Docker 容器的 `node` 用户（UID 1000）无法读取。需在宿主机执行 `sudo chmod -R o+rX /volume2/Movies /volume2/Photos /volume2/Musics /volume2/Games` 修复权限。
 
-**关键参数**：
-- `_netdev`：网络就绪后才挂载，防止开机时网络未通导致失败
+**历史：3060 工作站 SMB 挂载**（已弃用）：
+
+早期 3060 工作站通过 `/etc/fstab` 配置 CIFS 自动挂载到 `/mnt/nas/`。关键参数：
+- `_netdev`：网络就绪后才挂载
 - `nofail`：挂载失败不阻塞开机
-- `vers=3.0`：SMB 3.0 协议，性能和稳定性最佳
-- `uid/gid`：挂载后文件归属当前用户，无需 sudo
+- `vers=3.0`：SMB 3.0 协议
 - 凭证通过独立文件管理（权限 600）
 
 **性能对比（实测）**：
@@ -720,6 +720,58 @@ exec openclaw gateway --port 18789
 > - ARM64 上 OpenClaw CLI 交互命令很慢，**直接编辑 JSON 配置文件**是更好的选择
 > - npm 国内镜像（npmmirror.com）是 ARM64 NAS 的救命稻草——GitHub 和 npm 官方源在 NAS 上经常超时
 
+### 坑 16：UGOS NAS 目录权限 → Docker 容器无法读取用户文件
+
+**现象**：OpenClaw Docker 容器挂载了 NAS 存储卷（`/volume2:/nas/volume2:ro`），但在容器内执行 `ls /nas/volume2/Movies/` 返回 `Permission denied`。
+
+**原因**：绿联 UGOS 的用户可见目录（Movies / Photos / Musics / Games 等）使用 ACL 权限管理，`ls -la` 显示为 `d---------+`（基础权限全部为 0，通过 ACL 附加条目控制访问）。Docker 容器以 `node` 用户（UID 1000）运行，不在 ACL 条目中，因此无法读取。
+
+```
+d---------+   6 root root  4096 Feb 10 19:00 Movies
+d---------+   4 root root  4096 Sep  6 10:20 Musics
+d---------+  11 root root  4096 Feb 11 14:00 Photos
+d---------+   6 root root  4096 Sep  6 12:57 Games
+```
+
+**解决**：在 NAS 宿主机上为"其他用户"添加读取和执行权限：
+
+```bash
+sudo chmod -R o+rX /volume2/Movies /volume2/Photos /volume2/Musics /volume2/Games /volume2/迅雷下载
+```
+
+修复后容器内即可正常访问：
+
+```bash
+docker exec openclaw-gateway ls /nas/volume2/Movies/
+# → 007  BilibiliDownloads  学术研究
+```
+
+> **教训**：
+> - 绿联 UGOS 的用户目录不是标准 Unix 权限，而是 ACL 管理（`d---------+`），Docker 容器无法通过常规用户权限访问
+> - 修复方式：`chmod o+rX` 为"其他用户"添加只读权限，不影响 UGOS 自身的 ACL 机制
+> - 建议在 Docker 部署文档中预先说明此步骤，避免"挂载了但读不了"的困惑
+
+### 坑 17：Docker 容器 Workspace 未正确链接 → AI 读取默认文件
+
+**现象**：更新了 `TOOLS.md`（添加 NAS 存储路径映射），但 AI 仍然回复"无法访问 NAS 文件系统"。
+
+**原因**：`entrypoint.sh` 只创建了 `skills` 的符号链接，**遗漏了 `workspace`**。容器内 `/home/node/.openclaw/workspace/` 是 OpenClaw 安装时生成的默认文件（通用模板），不是我们自定义的版本。而挂载点 `/opt/openclaw/workspace/` 是正确的，但 OpenClaw 读取的是 `~/.openclaw/workspace/`。
+
+**解决**：在 `entrypoint.sh` 中添加 workspace 符号链接：
+
+```bash
+if [ -d "/opt/openclaw/workspace" ]; then
+    rm -rf "$OPENCLAW_HOME/workspace"
+    ln -sf /opt/openclaw/workspace "$OPENCLAW_HOME/workspace"
+    echo "✅ Workspace 已链接: /opt/openclaw/workspace"
+fi
+```
+
+> **教训**：
+> - OpenClaw 读取 `~/.openclaw/workspace/`，不是 Docker 挂载目录
+> - 自定义 workspace 必须通过符号链接或复制到 `~/.openclaw/workspace/`
+> - **修改 workspace 后要验证容器内实际读取的内容**：`docker exec openclaw-gateway cat ~/.openclaw/workspace/TOOLS.md`
+
 ---
 
 ## 问题解答
@@ -837,13 +889,13 @@ OpenClaw 作为 AI Agent 拥有 shell 执行能力，默认配置下权限几乎
   "defaults": {
     "security": "allowlist",
     "ask": "on-miss",
-    "askFallback": "deny",
+    "askFallback": "allow",
     "autoAllowSkills": true
   },
   "agents": {
     "main": {
       "security": "allowlist",
-      "askFallback": "deny",
+      "askFallback": "allow",
       "allowlist": [
         { "pattern": "*/bash" },
         { "pattern": "*/grep" },
@@ -865,7 +917,7 @@ OpenClaw 作为 AI Agent 拥有 shell 执行能力，默认配置下权限几乎
 
 **关键设置**：
 - `security: "allowlist"` — 只允许白名单中的命令
-- `askFallback: "deny"` — 无法弹窗审批时默认拒绝
+- `askFallback: "allow"` — Docker 非交互环境下无法弹窗审批时默认放行（仅对白名单命令有效）
 - 白名单只包含**查询类**命令，不含 `rm`、`sudo`、`chmod` 等
 
 #### 第 2 层：Tool Policy（openclaw.json）
@@ -931,7 +983,7 @@ function validateCommand(cmd: string): void {
 | sudo 权限 | 可用（密码可获取） | 插件层拦截 + AGENTS.md 禁止 |
 | 文件删除 | 无限制 | `rm -rf` 被正则拦截 |
 | 远程执行 | SSH 无限制 | SSH 仍保留（读取 3060 信息），但危险命令被拦截 |
-| 审批机制 | 无 | `askFallback: "deny"` — 未知命令默认拒绝 |
+| 审批机制 | 无 | `askFallback: "allow"` — 白名单命令自动放行，Docker 非交互环境兼容 |
 
 > **注意**：这些措施是**纵深防御**而非绝对安全。已通过 Docker 容器实现进一步隔离：非 root 运行、只读挂载、cap_drop ALL、no-new-privileges。详见 `docker/` 目录。
 
