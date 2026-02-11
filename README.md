@@ -18,7 +18,7 @@
 - **系统提示词精简实战**：从 34 工具 → 23 工具，完整裁剪决策记录（含本地 8B 模型阶段的经验）
 - **Docker 隔离部署**：非 root + cap_drop ALL + no-new-privileges + exec 白名单，启动自动通知飞书
 - **exec 审批系统实战**：allowlist 白名单 + safeBins + askFallback 配置，Docker 非交互模式下的踩坑与解决
-- **完整踩坑记录**：17 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
+- **完整踩坑记录**：17 个踩坑案例，按 5 大类整理（模型选型 / Skill 配置 / AI 行为 / 运维 / NAS 环境），含详细诊断过程 + 解决方案，可直接复用
 - **NAS 作为主机的实践**：RK3588C ARM64 平台运行 OpenClaw + Node.js + Docker 的完整实战经验
 - **模型演进全记录**：从云端 14B → 本地 8B（vLLM）→ 回归云端 14B，完整记录各阶段的取舍与经验
 
@@ -81,7 +81,7 @@ sequenceDiagram
 | 3 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
 | 4 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
 | 5 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、踩坑总结（自定义工具已清理，保留框架） |
-| — | **踩坑记录与时间线** | 17 个踩坑案例、最佳实践、部署时间线、裁剪决策记录、功能路线图（见本文下方） |
+| — | **踩坑记录与时间线** | 17 个踩坑案例（按 5 类整理：模型选型 / Skill 配置 / AI 行为 / 运维 / NAS 环境）、最佳实践、部署时间线、裁剪决策记录、功能路线图（见本文下方） |
 
 ---
 
@@ -151,9 +151,21 @@ NAS 双卷存储，OpenClaw Docker 容器通过只读挂载访问：
 
 ---
 
-## 踩坑记录
+## 踩坑记录（17 个案例）
 
-### 坑 1：4B 模型完全不会用工具
+> 以下是从零部署 OpenClaw 过程中遇到的 17 个典型问题，按类别整理。原始编号保留不变，方便与时间线交叉引用。
+
+| 类别 | 包含坑 | 关键词 |
+|------|--------|--------|
+| 一、模型能力与选型 | 坑 1、10、11 | 4B 不调工具、nativeSkills 干扰 14B、上下文溢出 |
+| 二、Workspace、Skill 与工具配置 | 坑 2、4、5、12 | TOOLS.md 遗漏、重启才生效、Skill 不触发、插件原生工具 |
+| 三、AI 行为异常与会话管理 | 坑 8、9 | 会话污染死循环、MEMORY.md 反向误导 |
+| 四、Gateway 与服务运维 | 坑 3、6、7、13 | WebSocket token、管道 EPIPE、目录移动、execSync 阻塞 |
+| 五、NAS 与基础环境 | 坑 14、15、16、17 | SSH 断连、ARM64 Node.js、UGOS 权限、Workspace 符号链接 |
+
+### 一、模型能力与选型
+
+#### 坑 1：4B 模型完全不会用工具
 
 **现象**：Qwen3-4B 面对任何需要 `exec` 的问题，只会给出"通用指导"（"您可以通过 `lshw` 命令查看..."）。
 
@@ -173,201 +185,7 @@ NAS 双卷存储，OpenClaw Docker 容器通过只读挂载访问：
 
 > **结论**：`qwen3-14b` 是 OpenClaw 的最佳搭档——具备完整的工具调用和 Skill 匹配能力，响应速度可接受。4B 太小，无法理解 function calling 协议。32B 能力更强但延迟明显增加，适合深度推理场景。
 
-### 坑 2：TOOLS.md 必须写明能力
-
-**现象**：已经配好了 `system_info` Skill，但 AI 仍然不会主动调用。
-
-**原因**：OpenClaw 每次会话开始时读取 `TOOLS.md`，如果里面没有提及系统信息能力，AI 就不知道自己可以执行命令。
-
-**解决**：在 `TOOLS.md` 中显式写出命令列表和本机基本信息。
-
-### 坑 3：Nginx WebSocket 要注入 token
-
-**现象**：Web UI 能打开但无法连接到 AI 后端。
-
-**原因**：OpenClaw Control UI 通过 WebSocket 连接网关，需要 auth token。浏览器端不会自动带上 token。
-
-**解决**：在 Nginx 的 `/ws` location 中将 token 拼接到 `proxy_pass` URL：
-
-```nginx
-proxy_pass http://127.0.0.1:18789/ws?token=你的token;
-```
-
-### 坑 4：新 Skill 需要重启 Gateway
-
-**现象**：创建了 Skill 目录但 `openclaw skills list` 看不到。
-
-**解决**：
-
-```bash
-source ~/.openclaw/env
-openclaw gateway --force  # 注意不是 openclaw restart
-```
-
-### 坑 5：Skill 有了但 AI 不调用
-
-**现象**：`openclaw skills list` 显示 weather Skill 为 `✓ ready`，但问"今天天气怎么样"，AI 回复"未找到天气查询工具"或尝试自己用内网 IP 定位然后失败。
-
-**原因**：两个问题叠加——
-
-1. **Workspace 没更新**：`TOOLS.md` 和 `SOUL.md` 只写了 `system_info` 的能力，没提到 weather。AI 每次会话读取 Workspace 上下文时，不知道自己能查天气。
-2. **SKILL.md 描述有误导**：写了"基于服务器 IP 自动定位"，AI 理解为需要先 `curl ip-api.com` 获取位置，结果拿到了局域网 IP `192.168.1.100`，无法定位。
-
-**解决**：
-
-- `TOOLS.md` 新增"天气查询"章节，写明 `bash get_weather.sh` 命令，**强调不要自己尝试 IP 定位**
-- `SOUL.md` 能力列表增加天气查询
-- `SKILL.md` 加粗提示"直接运行脚本即可"，删除误导性描述
-
-> **教训**：注册 Skill 只是第一步，**必须同步更新 Workspace 文件**（TOOLS.md / SOUL.md），否则 AI 不知道自己有这个能力。
-
-### 坑 6：gateway --force 不能管道截断
-
-**现象**：执行 `openclaw gateway --force 2>&1 | head -15` 后，Gateway 启动日志正常但随后进程崩溃，AI 无法回复任何消息。
-
-**原因**：Gateway 是长驻进程，持续向 stdout 输出日志。`head -15` 读完 15 行后关闭管道，Gateway 继续写入时触发 `EPIPE` 异常，进程直接崩溃。
-
-**日志中的错误**：
-
-```
-[openclaw] Uncaught exception: Error: write EPIPE
-    at afterWriteDispatched (node:internal/stream_base_commons:159:15)
-    ...
-```
-
-**解决**：重启 Gateway 时用 `nohup` 后台运行，不要用管道截断输出：
-
-```bash
-nohup openclaw gateway --force > /tmp/openclaw_restart.log 2>&1 &
-sleep 3
-grep -E "listening|model|error" /tmp/openclaw_restart.log  # 检查启动状态
-```
-
-> **教训**：长驻进程的 stdout 不能管道到 `head` / `tail -n` 等会提前关闭的命令，否则 EPIPE 会杀死进程。
-
-### 坑 7：移动项目目录后 OpenClaw 无法启动
-
-**现象**：将 OpenClaw 项目目录移动到新位置后，`openclaw gateway` 报错无法找到配置文件或 skills 目录。
-
-**原因**：`~/.openclaw/` 下的多个路径（workspace、skills、配置文件）使用了**绝对路径的符号链接**指向原始项目目录。移动项目后符号链接变为悬空链接。
-
-**解决**：重新创建所有符号链接，指向新的项目路径：
-
-```bash
-# 检查并修复悬空链接
-ls -la ~/.openclaw/workspace/
-ls -la ~/.openclaw/skills/
-# 删除旧链接，创建新链接指向正确路径
-```
-
-> **教训**：移动 OpenClaw 项目目录后，务必检查 `~/.openclaw/` 下所有符号链接是否仍然有效。
-
-### 坑 8：Skill 未注册 → AI 自行启动服务 → 端口冲突 → 对话历史污染死循环
-
-**现象**：用户在飞书发送 B站链接请求总结视频，AI 不执行 `bilibili_summary.sh` 脚本，反而反复输出"请手动检查端口占用"、"kill -9 \<PID\>"等排查步骤，形成死循环。即使服务完全正常（`curl /api/status` 返回 200），AI 依然坚持建议用户手动修复。
-
-**根本原因**：由 4 个问题依次触发，形成连锁反应——
-
-| 阶段 | 发生了什么 | 日志证据 |
-|:----:|-----------|----------|
-| 1 | Gateway 启动时 `bilibili_summary` Skill 尚未配置完成 | — |
-| 2 | AI 尝试调用 `bilibili_summary` 原生工具 → **`Tool bilibili_summary not found`** | session.jsonl: `"toolName": "bilibili_summary"` → `not found` |
-| 3 | AI 退而求其次，SSH 到 3060 工作站直接执行 `python3 server.py` | session.jsonl: exec → `ssh ubuntu-3060 'python3 server.py'` |
-| 4 | systemd 已在运行 server.py（8090端口），再起一个 → **端口冲突** | `ERROR: [Errno 98] address already in use` |
-| 5 | AI 看到端口冲突错误，开始输出排查步骤 | assistant: "请手动执行 lsof / kill..." |
-| 6 | 后续 Skill 已正常加载（`✓ ready`），但**对话历史已被污染**，AI 继续复读 | 多轮消息全是排查步骤 |
-
-**诊断过程**：
-
-1. 手动验证 3060 工作站服务正常：
-   ```bash
-   curl -s http://192.168.1.200:8090/api/status
-   # → {"status":"running","videos_processed":3}  ← 完全正常
-   ```
-
-2. 手动执行脚本验证功能正常：
-   ```bash
-   bash ~/.openclaw/skills/bilibili_summary/bilibili_summary.sh "https://www.bilibili.com/video/BV1DxFazREFM" --lang zh
-   # → 100s 完成全流程（下载+转写+AI总结），输出正常
-   ```
-
-3. **关键：读取 session.jsonl 找到根本错误**：
-   ```
-   Line 119: role=toolResult tool=bilibili_summary → "Tool bilibili_summary not found"
-   Line 121: role=toolResult tool=exec → "ERROR: [Errno 98] address already in use"
-   ```
-   AI 是因为找不到 Skill 工具才自己去启动 server.py 的。
-
-**解决方案**：
-
-```bash
-# 1. 备份并删除被污染的会话文件
-cp ~/.openclaw/agents/main/sessions/<session-id>.jsonl backup/
-rm ~/.openclaw/agents/main/sessions/<session-id>.jsonl
-
-# 2. 重置 sessions.json（让 OpenClaw 创建全新会话）
-python3 -c "
-import json
-path = '/home/youruser/.openclaw/agents/main/sessions/sessions.json'
-with open(path) as f: data = json.load(f)
-data['agent:main:main']['sessionId'] = ''
-data['agent:main:main']['systemSent'] = False
-with open(path, 'w') as f: json.dump(data, f, indent=2)
-"
-
-# 3. 重启 Gateway
-source ~/.openclaw/env && openclaw gateway --force
-```
-
-**教训**：
-
-- **Skill 必须在 Gateway 启动前配置好**。AI 第一次调用时若 Skill 不存在，它会"创造性"地尝试替代方案（如直接 SSH 启动服务），一旦失败就陷入错误模式
-- **对话历史一旦被污染就难以自我修复**。Qwen3-14B 看到大量排查消息后会持续生成同类回复，即使问题已修复
-- **AI 行为异常时，先查 session.jsonl** 而不是 server 日志。问题往往不在服务端，而在 AI 的对话上下文中
-- **systemd 管理的服务不要手动启动**。AI 或脚本不应直接 `python3 server.py`，应通过 `systemctl restart` 操作
-
-**修复后验证**：
-
-清除污染会话 + 移除 MEMORY.md + 重启 Gateway 后，飞书发送 B站链接端到端验证成功：
-
-| 步骤 | 结果 |
-|------|------|
-| 飞书发送视频链接 | ✅ Gateway 正确接收 |
-| AI 匹配 bilibili_summary Skill | ✅ 读取 SKILL.md |
-| AI 通过 exec 执行 bilibili_summary.sh | ✅ 正确传递 URL 参数 |
-| 3060 工作站处理（下载→转写→总结→NAS） | ✅ 114.6s 完成，HTTP 200 |
-| AI 解析输出并回复飞书 | ✅ 结构化总结成功回复用户 |
-
-测试视频：`BV1RkFAznESD`（"Agent Skills 做知识库检索，能比传统 RAG 效果更好吗？" 13:35，5619 字符转写）
-
-### 坑 9：MEMORY.md 踩坑记录反向误导 AI 行为
-
-**现象**：在坑 8 的排查过程中发现，即使清除了对话污染，AI 仍然倾向于建议用户手动排查，而不是先尝试执行脚本。
-
-**原因**：`~/.openclaw/workspace/MEMORY.md` 和 `memory/` 每日日志中记录了大量踩坑经历——端口冲突修复、手动 kill 进程、NAS 传输失败排查等。这些内容作为 Workspace **常驻上下文**在每次对话开始时加载。Qwen3-14B 读到这些"问题模式"后，遇到任何异常就条件反射地输出排查步骤。
-
-**解决**：暂时移除记忆文件的符号链接（原文件保留不动）：
-
-```bash
-# 移除符号链接（不删除原文件，随时可恢复）
-rm ~/.openclaw/workspace/MEMORY.md
-rm ~/.openclaw/workspace/memory
-
-# 恢复方式
-ln -s ~/Desktop/4_openclaw/1_OpenClawProject/workspace/MEMORY.md ~/.openclaw/workspace/MEMORY.md
-ln -s ~/Desktop/4_openclaw/1_OpenClawProject/workspace/memory ~/.openclaw/workspace/memory
-```
-
-**教训**：
-
-- **Workspace 记忆是双刃剑**。详细的踩坑记录对人类开发者很有价值，但 AI 可能从中"学到"错误的行为模式
-- **MEMORY.md 内容要精心筛选**，应记录"正确做法"而非"出错经历"：
-  - ✅ `NAS 传输: cat file | ssh nas 'dd of="path" bs=65536'`（正面、简洁）
-  - ❌ `NAS SCP 失败，rsync 也失败，cat>file 写入 0 字节...`（负面、冗长、误导 AI）
-- **记忆文件对 14B 模型的影响比 32B 更大**。14B 上下文理解能力有限，容易被负面案例带偏
-- **建议**：如果使用记忆系统，只保留精简的**正面指引**，把踩坑细节放在开发文档（如本文）中供人类参考
-
-### 坑 10：nativeSkills 导致 14B 模型 Skill 调用失败
+#### 坑 10：nativeSkills 导致 14B 模型 Skill 调用失败
 
 **现象**：用户在飞书问"看一下温度"或"你是什么硬件配置"，AI 回复"当前无法直接获取温度信息，您可以手动执行 `sudo sensors`..."，完全不触发 `system_info` Skill。同样的问题在 32B 模型上正常。
 
@@ -413,7 +231,7 @@ nohup openclaw gateway --force > /tmp/openclaw_restart.log 2>&1 &
 > - **小模型用 `nativeSkills: false`，大模型可用 `"auto"`**。32B 能正确理解两层工具调用的关系
 > - **排查 Skill 不触发时，先看日志中 `tool start/end` 的序列**，确认是 native tool 被调用还是 exec 被调用
 
-### 坑 11：系统提示过大 + 会话历史溢出（14B 上下文崩溃）
+#### 坑 11：系统提示过大 + 会话历史溢出（14B 上下文崩溃）
 
 **现象**：发送任何消息到 OpenClaw，立刻返回 HTTP 400 错误：
 ```
@@ -457,7 +275,45 @@ openclaw gateway stop && sleep 2 && openclaw gateway start
 > - 会话文件 (`.jsonl`) 是累积增长的，**必须定期清理**。建议超过 50KB 时备份重置
 > - `sessions.json` 中的 `skillsSnapshot` 是缓存，修改 SKILL.md 后需删除此文件让系统重新加载
 
-### 坑 12：Skill 上下文依赖 → 自定义插件原生 function calling
+### 二、Workspace、Skill 与工具配置
+
+#### 坑 2：TOOLS.md 必须写明能力
+
+**现象**：已经配好了 `system_info` Skill，但 AI 仍然不会主动调用。
+
+**原因**：OpenClaw 每次会话开始时读取 `TOOLS.md`，如果里面没有提及系统信息能力，AI 就不知道自己可以执行命令。
+
+**解决**：在 `TOOLS.md` 中显式写出命令列表和本机基本信息。
+
+#### 坑 4：新 Skill 需要重启 Gateway
+
+**现象**：创建了 Skill 目录但 `openclaw skills list` 看不到。
+
+**解决**：
+
+```bash
+source ~/.openclaw/env
+openclaw gateway --force  # 注意不是 openclaw restart
+```
+
+#### 坑 5：Skill 有了但 AI 不调用
+
+**现象**：`openclaw skills list` 显示 weather Skill 为 `✓ ready`，但问"今天天气怎么样"，AI 回复"未找到天气查询工具"或尝试自己用内网 IP 定位然后失败。
+
+**原因**：两个问题叠加——
+
+1. **Workspace 没更新**：`TOOLS.md` 和 `SOUL.md` 只写了 `system_info` 的能力，没提到 weather。AI 每次会话读取 Workspace 上下文时，不知道自己能查天气。
+2. **SKILL.md 描述有误导**：写了"基于服务器 IP 自动定位"，AI 理解为需要先 `curl ip-api.com` 获取位置，结果拿到了局域网 IP `192.168.1.100`，无法定位。
+
+**解决**：
+
+- `TOOLS.md` 新增"天气查询"章节，写明 `bash get_weather.sh` 命令，**强调不要自己尝试 IP 定位**
+- `SOUL.md` 能力列表增加天气查询
+- `SKILL.md` 加粗提示"直接运行脚本即可"，删除误导性描述
+
+> **教训**：注册 Skill 只是第一步，**必须同步更新 Workspace 文件**（TOOLS.md / SOUL.md），否则 AI 不知道自己有这个能力。
+
+#### 坑 12：Skill 上下文依赖 → 自定义插件原生 function calling
 
 **现象**：经历坑 10 和坑 11 的修复后，Skill 仍然不稳定——有时模型能调用，有时就忘了。尤其是切换到 32B 模型后，问题依旧：
 
@@ -554,7 +410,169 @@ openclaw plugins doctor
 > - 插件工具命名建议加前缀（如 `cw_`），避免与核心工具冲突
 > - 详细的插件开发指南见 [原生工具插件开发](./docs/6_OpenClaw_Native_Tools_Plugin.md)
 
-### 坑 13：execSync 阻塞事件循环 → bilibili_summary 工具调用被截断
+### 三、AI 行为异常与会话管理
+
+#### 坑 8：Skill 未注册 → AI 自行启动服务 → 端口冲突 → 对话历史污染死循环
+
+**现象**：用户在飞书发送 B站链接请求总结视频，AI 不执行 `bilibili_summary.sh` 脚本，反而反复输出"请手动检查端口占用"、"kill -9 \<PID\>"等排查步骤，形成死循环。即使服务完全正常（`curl /api/status` 返回 200），AI 依然坚持建议用户手动修复。
+
+**根本原因**：由 4 个问题依次触发，形成连锁反应——
+
+| 阶段 | 发生了什么 | 日志证据 |
+|:----:|-----------|----------|
+| 1 | Gateway 启动时 `bilibili_summary` Skill 尚未配置完成 | — |
+| 2 | AI 尝试调用 `bilibili_summary` 原生工具 → **`Tool bilibili_summary not found`** | session.jsonl: `"toolName": "bilibili_summary"` → `not found` |
+| 3 | AI 退而求其次，SSH 到 3060 工作站直接执行 `python3 server.py` | session.jsonl: exec → `ssh ubuntu-3060 'python3 server.py'` |
+| 4 | systemd 已在运行 server.py（8090端口），再起一个 → **端口冲突** | `ERROR: [Errno 98] address already in use` |
+| 5 | AI 看到端口冲突错误，开始输出排查步骤 | assistant: "请手动执行 lsof / kill..." |
+| 6 | 后续 Skill 已正常加载（`✓ ready`），但**对话历史已被污染**，AI 继续复读 | 多轮消息全是排查步骤 |
+
+**诊断过程**：
+
+1. 手动验证 3060 工作站服务正常：
+   ```bash
+   curl -s http://192.168.1.200:8090/api/status
+   # → {"status":"running","videos_processed":3}  ← 完全正常
+   ```
+
+2. 手动执行脚本验证功能正常：
+   ```bash
+   bash ~/.openclaw/skills/bilibili_summary/bilibili_summary.sh "https://www.bilibili.com/video/BV1DxFazREFM" --lang zh
+   # → 100s 完成全流程（下载+转写+AI总结），输出正常
+   ```
+
+3. **关键：读取 session.jsonl 找到根本错误**：
+   ```
+   Line 119: role=toolResult tool=bilibili_summary → "Tool bilibili_summary not found"
+   Line 121: role=toolResult tool=exec → "ERROR: [Errno 98] address already in use"
+   ```
+   AI 是因为找不到 Skill 工具才自己去启动 server.py 的。
+
+**解决方案**：
+
+```bash
+# 1. 备份并删除被污染的会话文件
+cp ~/.openclaw/agents/main/sessions/<session-id>.jsonl backup/
+rm ~/.openclaw/agents/main/sessions/<session-id>.jsonl
+
+# 2. 重置 sessions.json（让 OpenClaw 创建全新会话）
+python3 -c "
+import json
+path = '/home/youruser/.openclaw/agents/main/sessions/sessions.json'
+with open(path) as f: data = json.load(f)
+data['agent:main:main']['sessionId'] = ''
+data['agent:main:main']['systemSent'] = False
+with open(path, 'w') as f: json.dump(data, f, indent=2)
+"
+
+# 3. 重启 Gateway
+source ~/.openclaw/env && openclaw gateway --force
+```
+
+**教训**：
+
+- **Skill 必须在 Gateway 启动前配置好**。AI 第一次调用时若 Skill 不存在，它会"创造性"地尝试替代方案（如直接 SSH 启动服务），一旦失败就陷入错误模式
+- **对话历史一旦被污染就难以自我修复**。Qwen3-14B 看到大量排查消息后会持续生成同类回复，即使问题已修复
+- **AI 行为异常时，先查 session.jsonl** 而不是 server 日志。问题往往不在服务端，而在 AI 的对话上下文中
+- **systemd 管理的服务不要手动启动**。AI 或脚本不应直接 `python3 server.py`，应通过 `systemctl restart` 操作
+
+**修复后验证**：
+
+清除污染会话 + 移除 MEMORY.md + 重启 Gateway 后，飞书发送 B站链接端到端验证成功：
+
+| 步骤 | 结果 |
+|------|------|
+| 飞书发送视频链接 | ✅ Gateway 正确接收 |
+| AI 匹配 bilibili_summary Skill | ✅ 读取 SKILL.md |
+| AI 通过 exec 执行 bilibili_summary.sh | ✅ 正确传递 URL 参数 |
+| 3060 工作站处理（下载→转写→总结→NAS） | ✅ 114.6s 完成，HTTP 200 |
+| AI 解析输出并回复飞书 | ✅ 结构化总结成功回复用户 |
+
+测试视频：`BV1RkFAznESD`（"Agent Skills 做知识库检索，能比传统 RAG 效果更好吗？" 13:35，5619 字符转写）
+
+#### 坑 9：MEMORY.md 踩坑记录反向误导 AI 行为
+
+**现象**：在坑 8 的排查过程中发现，即使清除了对话污染，AI 仍然倾向于建议用户手动排查，而不是先尝试执行脚本。
+
+**原因**：`~/.openclaw/workspace/MEMORY.md` 和 `memory/` 每日日志中记录了大量踩坑经历——端口冲突修复、手动 kill 进程、NAS 传输失败排查等。这些内容作为 Workspace **常驻上下文**在每次对话开始时加载。Qwen3-14B 读到这些"问题模式"后，遇到任何异常就条件反射地输出排查步骤。
+
+**解决**：暂时移除记忆文件的符号链接（原文件保留不动）：
+
+```bash
+# 移除符号链接（不删除原文件，随时可恢复）
+rm ~/.openclaw/workspace/MEMORY.md
+rm ~/.openclaw/workspace/memory
+
+# 恢复方式
+ln -s ~/Desktop/4_openclaw/1_OpenClawProject/workspace/MEMORY.md ~/.openclaw/workspace/MEMORY.md
+ln -s ~/Desktop/4_openclaw/1_OpenClawProject/workspace/memory ~/.openclaw/workspace/memory
+```
+
+**教训**：
+
+- **Workspace 记忆是双刃剑**。详细的踩坑记录对人类开发者很有价值，但 AI 可能从中"学到"错误的行为模式
+- **MEMORY.md 内容要精心筛选**，应记录"正确做法"而非"出错经历"：
+  - ✅ `NAS 传输: cat file | ssh nas 'dd of="path" bs=65536'`（正面、简洁）
+  - ❌ `NAS SCP 失败，rsync 也失败，cat>file 写入 0 字节...`（负面、冗长、误导 AI）
+- **记忆文件对 14B 模型的影响比 32B 更大**。14B 上下文理解能力有限，容易被负面案例带偏
+- **建议**：如果使用记忆系统，只保留精简的**正面指引**，把踩坑细节放在开发文档（如本文）中供人类参考
+
+### 四、Gateway 与服务运维
+
+#### 坑 3：Nginx WebSocket 要注入 token
+
+**现象**：Web UI 能打开但无法连接到 AI 后端。
+
+**原因**：OpenClaw Control UI 通过 WebSocket 连接网关，需要 auth token。浏览器端不会自动带上 token。
+
+**解决**：在 Nginx 的 `/ws` location 中将 token 拼接到 `proxy_pass` URL：
+
+```nginx
+proxy_pass http://127.0.0.1:18789/ws?token=你的token;
+```
+
+#### 坑 6：gateway --force 不能管道截断
+
+**现象**：执行 `openclaw gateway --force 2>&1 | head -15` 后，Gateway 启动日志正常但随后进程崩溃，AI 无法回复任何消息。
+
+**原因**：Gateway 是长驻进程，持续向 stdout 输出日志。`head -15` 读完 15 行后关闭管道，Gateway 继续写入时触发 `EPIPE` 异常，进程直接崩溃。
+
+**日志中的错误**：
+
+```
+[openclaw] Uncaught exception: Error: write EPIPE
+    at afterWriteDispatched (node:internal/stream_base_commons:159:15)
+    ...
+```
+
+**解决**：重启 Gateway 时用 `nohup` 后台运行，不要用管道截断输出：
+
+```bash
+nohup openclaw gateway --force > /tmp/openclaw_restart.log 2>&1 &
+sleep 3
+grep -E "listening|model|error" /tmp/openclaw_restart.log  # 检查启动状态
+```
+
+> **教训**：长驻进程的 stdout 不能管道到 `head` / `tail -n` 等会提前关闭的命令，否则 EPIPE 会杀死进程。
+
+#### 坑 7：移动项目目录后 OpenClaw 无法启动
+
+**现象**：将 OpenClaw 项目目录移动到新位置后，`openclaw gateway` 报错无法找到配置文件或 skills 目录。
+
+**原因**：`~/.openclaw/` 下的多个路径（workspace、skills、配置文件）使用了**绝对路径的符号链接**指向原始项目目录。移动项目后符号链接变为悬空链接。
+
+**解决**：重新创建所有符号链接，指向新的项目路径：
+
+```bash
+# 检查并修复悬空链接
+ls -la ~/.openclaw/workspace/
+ls -la ~/.openclaw/skills/
+# 删除旧链接，创建新链接指向正确路径
+```
+
+> **教训**：移动 OpenClaw 项目目录后，务必检查 `~/.openclaw/` 下所有符号链接是否仍然有效。
+
+#### 坑 13：execSync 阻塞事件循环 → bilibili_summary 工具调用被截断
 
 **现象**：通过飞书发送 B 站视频链接后，AI 回复"正在处理，预计 3-5 分钟"，然后**永远不再回复**。多次重试均相同，`/reset` 命令也无响应。
 
@@ -634,7 +652,9 @@ async execute(_id: string, params: { url: string; lang?: string }) {
 > - 长时间运行的工具必须用异步 `exec` + `maxBuffer`（默认 1MB 不够大，转写文本可达数 MB）
 > - 同步执行（`runScript` / `execSync`）保留给 < 60s 的短命令即可
 
-### 坑 14：SSH 串联 NAS 经常断连 → 改用 SMB 挂载
+### 五、NAS 与基础环境
+
+#### 坑 14：SSH 串联 NAS 经常断连 → 改用 SMB 挂载
 
 **现象**：早期架构中，3060 工作站通过 SSH 访问 NAS 上的文件（`ssh nas 'cat /path/file'`、`cat file | ssh nas 'dd of=...'`）。但在实际运行中，SSH 连接**频繁出现以下问题**：
 
@@ -669,7 +689,7 @@ async execute(_id: string, params: { url: string; lang?: string }) {
 > - NAS 作为主机后，`cw_nas_search` 直接在本地执行 `find`/`du`（无需 SSH），性能更优
 > - 3060 统一挂载路径（`/mnt/nas/`）写入 TOOLS.md，让 AI 知道正确的访问方式
 
-### 坑 15：NAS ARM64 平台 Node.js 安装踩坑（apt 依赖冲突 → nvm 救场）
+#### 坑 15：NAS ARM64 平台 Node.js 安装踩坑（apt 依赖冲突 → nvm 救场）
 
 **现象**：在绿联 NAS（Debian 12 / UGOS / aarch64）上通过 NodeSource 安装 Node.js 22 时，`apt-get install nodejs` 报大量依赖冲突：
 
@@ -720,7 +740,7 @@ exec openclaw gateway --port 18789
 > - ARM64 上 OpenClaw CLI 交互命令很慢，**直接编辑 JSON 配置文件**是更好的选择
 > - npm 国内镜像（npmmirror.com）是 ARM64 NAS 的救命稻草——GitHub 和 npm 官方源在 NAS 上经常超时
 
-### 坑 16：UGOS NAS 目录权限 → Docker 容器无法读取用户文件
+#### 坑 16：UGOS NAS 目录权限 → Docker 容器无法读取用户文件
 
 **现象**：OpenClaw Docker 容器挂载了 NAS 存储卷（`/volume2:/nas/volume2:ro`），但在容器内执行 `ls /nas/volume2/Movies/` 返回 `Permission denied`。
 
@@ -751,7 +771,7 @@ docker exec openclaw-gateway ls /nas/volume2/Movies/
 > - 修复方式：`chmod o+rX` 为"其他用户"添加只读权限，不影响 UGOS 自身的 ACL 机制
 > - 建议在 Docker 部署文档中预先说明此步骤，避免"挂载了但读不了"的困惑
 
-### 坑 17：Docker 容器 Workspace 未正确链接 → AI 读取默认文件
+#### 坑 17：Docker 容器 Workspace 未正确链接 → AI 读取默认文件
 
 **现象**：更新了 `TOOLS.md`（添加 NAS 存储路径映射），但 AI 仍然回复"无法访问 NAS 文件系统"。
 
@@ -771,7 +791,6 @@ fi
 > - OpenClaw 读取 `~/.openclaw/workspace/`，不是 Docker 挂载目录
 > - 自定义 workspace 必须通过符号链接或复制到 `~/.openclaw/workspace/`
 > - **修改 workspace 后要验证容器内实际读取的内容**：`docker exec openclaw-gateway cat ~/.openclaw/workspace/TOOLS.md`
-
 ---
 
 ## 问题解答
