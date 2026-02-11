@@ -1,4 +1,4 @@
-# OpenClaw 实战部署：NAS + GPU 双机协同打造 7×24 私人 AI 助手
+# OpenClaw 实战部署：NAS + 云端 API 打造 7×24 私人 AI 助手
 
 <p align="center">
   <img src="images/openclaw_logo.png" alt="OpenClaw Logo" width="200" />
@@ -6,19 +6,21 @@
 
 > **OpenClaw** 是 2026 年最火的开源 AI 助手平台之一——它不只是一个聊天机器人框架，而是一个完整的 **AI Agent 操作系统**：支持飞书 / Web 多渠道接入，内置工具调用（function calling）、技能系统（Skills）、记忆管理、多 Agent 协作，还能接入任意 OpenAI 兼容的大模型。
 >
-> 本项目是一份**从零到可用的完整实战记录**——用一台绿联 DH4300+ NAS（7×24 低功耗调度中心）+ 一台 RTX 3060 工作站（GPU 推理），搭建双机协同的私人 AI 助手，完整踩坑实录。
+> 本项目是一份**从零到可用的完整实战记录**——用一台绿联 DH4300+ NAS（7×24 低功耗调度中心）+ 阿里云 DashScope API（Qwen3-14B），搭建纯云端推理的私人 AI 助手，完整踩坑实录。
 
 ---
 
 ## 项目亮点
 
-- **双机协同架构**：绿联 NAS DH4300+（7×24 低功耗调度中心 + 5.4T 持久存储）+ 3060 工作站（vLLM 本地推理），局域网互联
-- **本地大模型推理**：3060 工作站通过 vLLM 运行 Qwen3-8B-AWQ（量化），24000 token 上下文，零 API 成本；3060 离线时自动回退到云端 Qwen3-14B
-- **系统提示词精简实战**：从 34 工具 → 23 工具，8B 模型上下文占用从 ~14K tokens 压缩到 ~8K tokens，完整记录裁剪决策过程
-- **Docker 隔离部署**：OpenClaw 运行在 Docker 容器，非 root + 只读挂载 + cap_drop ALL + no-new-privileges，启动自动通知飞书
-- **飞书原生集成**：WebSocket 长连接收发消息，启动/重启自动发送飞书通知
+- **NAS + 云端 API 架构**：绿联 NAS DH4300+（7×24 低功耗调度中心 + 5.4T 持久存储）+ 阿里云 DashScope Qwen3-14B API，轻量高效
+- **纯云端推理**：DashScope Qwen3-14B / 32B，131K 上下文窗口，极低成本（百万 token ¥1.5），无需 GPU 硬件
+- **23 个内置工具实测**：exec / 文件读写 / heartbeat / memory / web_fetch 全部验证，含 8B vs 14B 工具调用能力对比
+- **系统提示词精简实战**：从 34 工具 → 23 工具，完整裁剪决策记录（含本地 8B 模型阶段的经验）
+- **Docker 隔离部署**：非 root + cap_drop ALL + no-new-privileges + exec 白名单，启动自动通知飞书
+- **exec 审批系统实战**：allowlist 白名单 + safeBins + askFallback 配置，Docker 非交互模式下的踩坑与解决
 - **完整踩坑记录**：15+ 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
 - **NAS 作为主机的实践**：RK3588C ARM64 平台运行 OpenClaw + Node.js + Docker 的完整实战经验
+- **模型演进全记录**：从云端 14B → 本地 8B（vLLM）→ 回归云端 14B，完整记录各阶段的取舍与经验
 
 ---
 
@@ -26,62 +28,37 @@
 
 ```mermaid
 graph TB
-    subgraph LAN["🌐 局域网 192.168.x.x"]
+    subgraph NAS["💾 绿联 NAS DH4300+ — 调度中心 + 存储"]
         direction TB
-
-        subgraph NAS["💾 绿联 NAS DH4300+ — 调度中心 + 存储"]
-            direction TB
-            N_HW["RK3588C / 8GB / Debian 12<br/>3.6T + 1.8T 双卷 · 7×24 运行"]
-            N1["OpenClaw Gateway<br/>(Docker 容器)"]
-            N4["飞书 WebSocket"]
-            N_NOTIFY["启动自动通知飞书"]
-            N5["NAS 本地存储"]
-        end
-
-        subgraph GPU["⚡ 3060 GPU 工作站 — LLM 推理节点"]
-            direction TB
-            G_HW["i5-13490F / 32GB / RTX 3060 12GB"]
-            G1["vLLM :8000<br/>Qwen3-8B-AWQ"]
-            G4["Docker · 开机自启"]
-        end
+        N_HW["RK3588C / 8GB / Debian 12<br/>3.6T + 1.8T 双卷 · 7×24 运行"]
+        N1["OpenClaw Gateway<br/>(Docker 容器)"]
+        N4["飞书 WebSocket"]
+        N_NOTIFY["启动自动通知飞书"]
+        N5["NAS 本地存储"]
     end
 
     USER["👤 用户<br/>飞书"] -->|"对话请求"| N4
-    N1 -->|"OpenAI API :8000<br/>本地推理（主力）"| G1
-    N1 -.->|"API 回退<br/>（3060 离线时）"| CLOUD["☁️ 阿里云 DashScope<br/>Qwen3-14B 备用"]
+    N1 -->|"DashScope API<br/>Qwen3-14B"| CLOUD["☁️ 阿里云 DashScope<br/>Qwen3-14B / 32B"]
 
     style NAS fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    style GPU fill:#fff3e0,stroke:#e65100,stroke-width:2px
-    style LAN fill:#fafafa,stroke:#999,stroke-width:1px
     style USER fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    style CLOUD fill:#fce4ec,stroke:#c62828,stroke-width:1px
+    style CLOUD fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
 ```
 
-**数据流示例 — 本地模型对话 + 自动回退**：
+**数据流示例 — 云端 API 对话**：
 
 ```mermaid
 sequenceDiagram
     participant U as 👤 用户 (飞书)
     participant N as 💾 NAS (DH4300+)<br/>OpenClaw Docker
-    participant G as ⚡ 3060 工作站<br/>vLLM Qwen3-8B
-    participant C as ☁️ DashScope<br/>Qwen3-14B 备用
+    participant C as ☁️ DashScope<br/>Qwen3-14B
 
-    Note over N: 容器启动 → 健康检查 3060
-    alt 3060 在线
-        N->>N: 配置 primary = local-3060/qwen3-8b
-    else 3060 离线
-        N->>N: 自动回退 primary = cloud/qwen3-14b
-    end
+    Note over N: 容器启动 → 连接飞书 WebSocket
     N->>U: 飞书通知：OpenClaw 已重启 + 当前模型
 
     U->>N: 飞书发消息
-    alt 使用本地模型
-        N->>G: OpenAI API /v1/chat/completions
-        G-->>N: 模型回复（tool calling 支持）
-    else 使用云端备用
-        N->>C: DashScope API
-        C-->>N: 模型回复
-    end
+    N->>C: DashScope API /v1/chat/completions
+    C-->>N: 模型回复（含 tool calling）
     N-->>U: 飞书回复
 ```
 
@@ -89,9 +66,9 @@ sequenceDiagram
 
 ## 自定义 Skill（已全部清理）
 
-> **2026-02-11**：所有自定义 Skill 和工具已清理。原因：切换到本地 8B 模型后上下文窗口有限（24K tokens），需要精简系统提示词。原有 5 个自定义 Skill（system_info / weather / nas_search / personal_info / bilibili_summary）及其 Function Calling 工具已移除，后续根据需要重新开发轻量版本。
+> **2026-02-11**：所有自定义 Skill 和工具已清理。原因：精简系统提示词、聚焦核心能力。原有 5 个自定义 Skill（system_info / weather / nas_search / personal_info / bilibili_summary）及其 Function Calling 工具已移除，后续根据需要重新开发。
 >
-> 保留 OpenClaw 内置的 23 个核心工具（文件读写、Shell 执行、网页搜索、浏览器、定时任务、消息、记忆等）。
+> 保留 OpenClaw 内置的 23 个核心工具（文件读写、Shell 执行、网页搜索、浏览器、定时任务、消息、记忆等）。当前使用云端 DashScope Qwen3-14B API，131K 上下文窗口充足。
 
 ---
 
@@ -132,7 +109,7 @@ openclaw agent --agent main --message "你好"
 | 设备 | 角色 | 规格 | 说明 |
 |------|------|------|------|
 | 绿联 DH4300+ NAS | **OpenClaw 调度中心 + 持久存储** | RK3588C / 8GB / 3.6T+1.8T 双卷 | Debian 12，7×24 运行，Docker 容器运行 Gateway + 飞书 + 存储一体 |
-| RTX 3060 工作站 | **LLM 推理节点** | i5-13490F / 32GB / RTX 3060 12GB | vLLM 运行 Qwen3-8B-AWQ（量化），OpenAI 兼容 API :8000，Docker 开机自启 |
+| ~~RTX 3060 工作站~~ | ~~LLM 推理节点~~ | ~~i5-13490F / 32GB / RTX 3060 12GB~~ | 历史：曾用 vLLM 运行 Qwen3-8B-AWQ，后改为纯云端 API，不再作为推理节点 |
 
 ### 为什么选 NAS 作为主机？
 
@@ -170,7 +147,7 @@ NAS 作为主机后，OpenClaw 直接读写本地存储，无需 SMB 挂载。30
 | Node.js (50M sqrt) | 1159 ms | — |
 | 磁盘写入 (256MB) | **2.1 GB/s** | 280 MB/s |
 
-> **结论**：3060 工作站 CPU 性能最强（单核是 NAS 的 6.7 倍），适合 GPU 推理任务但功耗高不适合 24/7 待机。NAS 虽然 CPU 性能偏弱（ARM64 架构），但具有 **磁盘 I/O 极强（2.1 GB/s）、7×24 低功耗运行、存储空间充足（5.4T）** 三大优势，作为 OpenClaw Gateway 调度中心 + 数据存储一体机是最佳选择。Node.js 在 RK3588C 上运行 OpenClaw Gateway 完全可用，响应延迟主要取决于云端 Qwen API 而非本地 CPU。
+> **结论**：NAS 虽然 CPU 性能偏弱（ARM64 架构），但具有 **磁盘 I/O 极强（2.1 GB/s）、7×24 低功耗运行、存储空间充足（5.4T）** 三大优势，作为 OpenClaw Gateway 调度中心 + 数据存储一体机是最佳选择。Node.js 在 RK3588C 上运行 OpenClaw Gateway 完全可用，响应延迟主要取决于云端 DashScope API 而非本地 CPU。当前使用纯云端推理（Qwen3-14B），NAS 只负责网关调度 + 存储，无需 GPU 硬件。
 
 ---
 
@@ -1011,6 +988,8 @@ function validateCommand(cmd: string): void {
 | ✅ | 2026-02-11 | 关闭全部 5 个自定义 Skill/工具：system_info、weather、nas_search、personal_info、bilibili_summary |
 | ✅ | 2026-02-11 | 关闭 11 个飞书内置工具：doc / wiki / drive / scopes / bitable（get_meta/list_fields/list_records/get_record/create_record/update_record），patch bitable.ts 源码使其尊重 tools.doc=false |
 | ✅ | 2026-02-11 | **上下文窗口调优**：vLLM max-model-len 24000 ↔ OpenClaw contextWindow 24000，系统提示 ~8K tokens，剩余 ~16K tokens 供对话 |
+| ✅ | 2026-02-11 | **回归纯云端 API**：经过本地 8B 模型的完整测试后，决定放弃本地推理，改用 DashScope Qwen3-14B API。原因：14B 工具调用能力显著优于 8B，131K 上下文窗口不再受限，极低成本（百万 token ¥1.5），且无需维护 3060 工作站 |
+| ⏸️ | 2026-02-11 | **OpenClaw 暂停运行**：评估 Token 成本后决定暂停。核心问题：每轮对话 ~9K tokens 的系统开销（23 个工具 Schema + Workspace 自学习），其中 60%+ 不是用户实际对话。对云端 API 预算不友好，后续考虑轻量 Bot 替代方案 |
 
 > 从零到功能完备的 OpenClaw 私人 AI 助手（还在持续进化中）。
 >
@@ -1018,7 +997,7 @@ function validateCommand(cmd: string): void {
 >
 > **2/10 回顾**：发现并修复了坑 10（nativeSkills）和坑 11（上下文溢出）。最重要的突破是**坑 12**：深入分析 OpenClaw 源码后发现，Skill 的上下文注入机制对 14B/32B 模型都不够可靠，最终通过**插件系统 `api.registerTool()`** 将 5 个自定义 Skill 注册为原生 function calling 工具，实现了**不依赖上下文的确定性调用**。架构优化：NAS 作为主机后 `cw_nas_search` 改为本地 `find` 执行（无需 SSH），bilibili_summary v6 实现转写与总结解耦。晚间完成**架构迁移**：彻底放弃不稳定的 Surface Pro，在绿联 NAS 上通过 nvm 安装 Node.js 22 + OpenClaw，恢复全部配置并验证成功。
 >
-> **2/11 回顾**：完成三项关键架构升级。**第一**，安全加固 + Docker 容器化，4 层纵深防御确保 AI 无法执行危险操作。**第二**，部署本地 Qwen3-8B-AWQ 到 3060 工作站，通过 vLLM 提供 OpenAI 兼容 API，实现零 API 成本推理，同时保留云端自动回退。**第三，也是最关键的**——**系统提示词大裁剪**：由于 8B 模型上下文窗口有限（24K tokens），必须大幅精简工具数量。从 34 个工具裁剪到 23 个，删除全部 5 个自定义工具 + 11 个飞书文档类工具。其中飞书 bitable 工具因不尊重 `tools` 配置，需直接 patch OpenClaw 源码 (`bitable.ts`) 才能关闭。裁剪后系统提示 ~8K tokens，剩余 ~16K tokens 可供对话——8B 模型终于能正常回复了。
+> **2/11 回顾**：完成四项关键架构变更。**第一**，安全加固 + Docker 容器化，4 层纵深防御确保 AI 无法执行危险操作。**第二**，部署本地 Qwen3-8B-AWQ 到 3060 工作站进行测试，发现 8B 模型的工具调用能力不足（不稳定、倾向用 shell 重定向代替文件工具、上下文窗口受限）。**第三**，系统提示词大裁剪：从 34 工具裁剪到 23 工具，删除全部 5 个自定义工具 + 11 个飞书文档类工具，其中 bitable 工具需 patch 源码。**第四，最终决策**——**回归纯云端 API**：综合测试 8B/14B 后，14B 工具调用能力显著优于 8B，131K 上下文不再受限，DashScope 成本极低（百万 token ¥1.5），不再需要维护 3060 工作站和 vLLM 服务。最终架构精简为：NAS Docker 网关 + DashScope Qwen3-14B API。
 
 ---
 
@@ -1027,24 +1006,25 @@ function validateCommand(cmd: string): void {
 | 状态 | 功能 | 说明 |
 |:----:|------|------|
 | ✅ | OpenClaw 基础部署 | NAS Docker 容器 + 飞书 WebSocket + Gateway |
-| ✅ | **本地 LLM 推理** | 3060 工作站 vLLM 运行 Qwen3-8B-AWQ，零 API 成本；离线时自动回退云端 Qwen3-14B |
+| ✅ | **云端 LLM 推理** | 阿里云 DashScope Qwen3-14B / 32B API，131K 上下文，极低成本 |
 | ✅ | 飞书双向机器人 | 企业自建应用 + WebSocket 长连接，主要 IM 渠道 |
 | ✅ | **飞书启动通知** | 容器启动/重启后自动发飞书消息，通知当前模型和状态 |
 | ✅ | Docker 隔离环境 | node 用户（UID 1000）+ 只读挂载 + cap_drop ALL + no-new-privileges + 2GB 内存限制 |
 | ✅ | 安全加固 | 4 层纵深防御：exec 白名单 + tool policy + 插件命令黑名单 + 分级权限 |
-| ✅ | **系统提示词裁剪** | 从 34 工具精简到 23 工具，关闭飞书文档类 11 个工具 + 5 个自定义工具，提示词 ~8K tokens |
+| ✅ | **系统提示词裁剪** | 从 34 工具精简到 23 工具，关闭飞书文档类 11 个工具 + 5 个自定义工具 |
 | ✅ | 记忆系统 | MEMORY.md 长期记忆 + 每日日志 |
-| ⛔ | ~~全部自定义 Skill~~ | ~~system_info / weather / nas_search / personal_info / bilibili_summary~~ — **已清理**（8B 模型上下文优化） |
+| ⛔ | ~~全部自定义 Skill~~ | ~~system_info / weather / nas_search / personal_info / bilibili_summary~~ — **已清理** |
 | ⛔ | ~~飞书文档工具~~ | ~~doc / wiki / drive / bitable / scopes~~ — **已关闭**（tools 配置 + 源码 patch） |
 | ⛔ | ~~原生 Function Calling 插件~~ | ~~5 个自定义工具~~ — **已清空**，保留插件框架 |
+| ⛔ | ~~本地 8B 推理~~ | ~~3060 vLLM Qwen3-8B-AWQ~~ — **已弃用**，改为纯云端 DashScope API |
+| ⏸️ | **OpenClaw 整体暂停** | Token 成本结构不合理（系统开销占 60%+），对云端 API 预算不友好，详见[优缺点评估](#openclaw-优缺点评估实测总结) |
 | ⏳ | 小爱音箱语音交互 | Mi-GPT 已部署，等待小米账号安全验证生效 |
-| 📋 | 新一代轻量 Skill | 为 8B 模型重新设计的轻量工具 |
+| 📋 | 轻量 Bot 替代方案 | 直接调 DashScope API + 按需注入工具，Token 效率更高 |
 | 📋 | MCP Server 集成 | 通过 Model Context Protocol 接入外部工具 |
-| 📋 | 多 Agent 协作 | Coding Agent、Research Agent 等 |
 | 📋 | Home Assistant 联动 | AI 控制智能家居 |
 | 📋 | 知识库 RAG | 私有文档库问答 |
 
-> ✅ = 已完成 &nbsp; ⏳ = 进行中 &nbsp; 📋 = 待完成 &nbsp; ⛔ = 已关闭/已清理
+> ✅ = 已完成 &nbsp; ⏳ = 进行中 &nbsp; ⏸️ = 暂停 &nbsp; 📋 = 待完成 &nbsp; ⛔ = 已关闭/已清理
 
 ---
 
@@ -1052,9 +1032,11 @@ function validateCommand(cmd: string): void {
 
 ### 背景
 
-从云端 Qwen3-14B/32B 切换到本地 3060 工作站的 Qwen3-8B-AWQ 后，上下文窗口从 98K tokens 骤降到 24K tokens。而 OpenClaw 默认加载的系统提示词 + 工具 Schema 高达 ~14K tokens（34 个工具），留给实际对话的空间仅 ~10K tokens，8B 模型频繁出现空回复或上下文溢出。
+在部署本地 Qwen3-8B-AWQ 阶段，上下文窗口仅 24K tokens，而 OpenClaw 默认加载的系统提示词 + 工具 Schema 高达 ~14K tokens（34 个工具），留给实际对话的空间仅 ~10K tokens，8B 模型频繁出现空回复或上下文溢出。
 
 **核心矛盾**：工具越多 → 系统提示越大 → 对话空间越小 → 8B 模型回复质量越差。必须裁剪。
+
+> **后续演进**：裁剪完成后经过 8B vs 14B 对比测试，最终决定回归纯云端 DashScope Qwen3-14B API。14B 拥有 131K 上下文窗口，裁剪后的 23 工具不再是上下文瓶颈，但精简后的工具集更加聚焦实用，因此保留裁剪成果。
 
 ### 裁剪前状态
 
@@ -1163,6 +1145,100 @@ if (toolsCfg?.doc === false) {
 
 ---
 
+## OpenClaw 优缺点评估（实测总结）
+
+> 经过 4 天的完整部署、开发、测试和迭代（2/8 ~ 2/11），对 OpenClaw 的能力和局限有了深刻认识。以下是基于实战经验的客观评估。
+
+### 优点
+
+| 维度 | 评价 |
+|------|------|
+| **完整的 AI Agent 操作系统** | 不只是聊天框架，内置 23+ 工具（文件操作、Shell 执行、网页浏览、定时任务、记忆系统），开箱即可执行实际任务 |
+| **多渠道接入** | 飞书 WebSocket 一键接入，还支持 Telegram / Discord / Web UI 等，不需要自己写对接代码 |
+| **模型自由** | 任意 OpenAI 兼容 API，可接 DashScope / Ollama / vLLM / GPT 等，切换只改一行配置 |
+| **Workspace 设计精巧** | Markdown 定义人格/身份/工具/记忆，"一切皆文件"的哲学非常 Unix，易懂易改 |
+| **插件系统灵活** | `api.registerTool()` 注册原生 Function Calling 工具，不依赖上下文注入，100% 确定性调用 |
+| **安全机制完善** | exec-approvals 白名单 + safeBins + askFallback，多层防御可配置，比纯 prompt 约束靠谱得多 |
+| **部署轻量** | Node.js 单进程，内存占用 ~50MB（不含模型），ARM64 NAS 也能流畅运行 |
+| **社区活跃** | 2026 年热门开源项目，文档完善，安装工具成熟（OpenClawInstaller） |
+
+### 缺点与 Token 浪费问题
+
+这是决定暂停 OpenClaw 的核心原因——**Token 成本结构不合理**，对云端 API 用户极不友好。
+
+#### 1. 系统提示词的 Token 开销巨大
+
+每次对话（包括用户说一句"你好"），OpenClaw 都会注入完整的系统上下文：
+
+| 组件 | Token 占用 | 说明 |
+|------|:----------:|------|
+| SOUL.md | ~500 | AI 人格定义 |
+| IDENTITY.md | ~300 | 身份信息 |
+| AGENTS.md | ~800 | 行为规则 |
+| TOOLS.md | ~500 | 工具速查 |
+| BOOTSTRAP.md | ~300 | 启动引导 |
+| 23 个工具 Schema | **~6,000** | 工具定义（不可控，框架自动注入） |
+| 飞书上下文 | ~500 | 消息格式、反应规则 |
+| **合计** | **~9,000** | **每轮对话的固定开销** |
+
+> **关键问题**：23 个工具的 Schema 是框架自动注入的，**用户无法控制**。即使只想聊天不用工具，这 ~6K tokens 也会照常消耗。
+
+#### 2. 环境自学习浪费 Token
+
+OpenClaw 的 AGENTS.md 默认指导 AI 在每次新会话时：
+1. 读取 `SOUL.md` → 消耗 tool call tokens
+2. 读取 `IDENTITY.md` → 消耗 tool call tokens
+3. 读取 `memory/YYYY-MM-DD.md`（今天 + 昨天）→ 消耗 tool call tokens
+4. 读取 `MEMORY.md` → 消耗 tool call tokens
+
+每次会话开始，AI **先花几千 tokens 读文件了解自己是谁**，然后才开始回答用户问题。这对闲聊场景是巨大浪费。
+
+#### 3. 模型"过度谨慎"浪费 Token
+
+实测中 Qwen3-14B 在 OpenClaw 框架下经常：
+- 执行只读命令前**先问用户确认**（"请确认是否批准执行此操作"），等用户回复后才执行 → 多一轮对话 = 多 ~2K tokens
+- 回复结尾附加"引申问题"（AGENTS.md 要求）→ 每轮额外 ~200 tokens
+- 调用不必要的工具（如先 `read_file` 读 TOOLS.md 再决定怎么做）
+
+#### 4. Token 成本估算
+
+以 DashScope Qwen3-14B 计价（输入 ¥1.5/百万 token，输出 ¥6/百万 token）：
+
+| 场景 | 单次 Token 消耗 | 日均 | 月估算 |
+|------|:--------------:|:----:|:------:|
+| 系统提示（每轮固定） | ~9,000 输入 | — | — |
+| 简单闲聊（1 轮） | ~10,000 输入 + ~500 输出 | 20 次 → 200K 输入 | ~¥0.3 输入 |
+| 文件搜索（2 轮，含确认） | ~25,000 输入 + ~1,000 输出 | 5 次 → 125K 输入 | ~¥0.2 输入 |
+| 复杂任务（5 轮工具调用） | ~60,000 输入 + ~3,000 输出 | 3 次 → 180K 输入 | ~¥0.3 输入 |
+| **月合计** | | | **~¥1-3**（轻度使用） |
+
+> **单看绝对金额并不高**，但问题是：**其中 60%+ 的 Token 消耗是系统开销（系统提示 + 自学习 + 工具 Schema），不是用户实际对话**。如果去掉 OpenClaw 框架的开销，直接调 API，同样的功能 Token 消耗可以降低一半以上。
+
+#### 5. 与直接调 API 的对比
+
+| 维度 | OpenClaw 框架 | 直接调 DashScope API |
+|------|:------------:|:-------------------:|
+| 每轮固定 Token 开销 | ~9,000（不可避免） | ~500（自定义 system prompt） |
+| 工具调用 | 23 个 Schema 全量注入 | 按需注入需要的工具 |
+| 自学习开销 | 每会话读 4-5 个文件 | 0（prompt 直接写） |
+| 功能完整度 | 开箱即用，飞书/Web/记忆 | 需自己开发对接层 |
+| 开发成本 | 低（配置即用） | 高（需写代码） |
+| Token 效率 | **低**（60% 系统开销） | **高**（95% 有效对话） |
+
+### 结论
+
+**OpenClaw 是一个优秀的 AI Agent 框架**——如果你使用的是无限上下文的本地模型（如 Ollama + 大显存 GPU）或不在意 API 成本的场景，它的工具系统、渠道接入、安全机制都非常成熟。
+
+**但对于预算敏感的云端 API 用户**，OpenClaw 的 Token 效率是一个显著问题。每轮对话 ~9K tokens 的固定开销，在轻量使用场景下占比过高。如果主要需求是飞书聊天 + 偶尔搜文件，自己写一个轻量 Bot（直接调 API + 按需注入工具）的 Token 效率会好得多。
+
+> **适用场景推荐**：
+> - ✅ **本地大模型用户**（Ollama / vLLM + 大显存 GPU）— Token 免费，OpenClaw 的丰富功能尽管享用
+> - ✅ **企业用户**（不在意 API 成本）— 开箱即用的多渠道 AI 助手
+> - ⚠️ **个人用户 + 云端 API**（预算敏感）— Token 开销偏高，建议评估是否值得
+> - ❌ **轻量聊天场景**— 系统开销占比过大，杀鸡用牛刀
+
+---
+
 ## 参考链接
 
 - [OpenClaw 官方仓库](https://github.com/openclaw/openclaw)
@@ -1179,5 +1255,7 @@ if (toolsCfg?.doc === false) {
 ---
 
 > **撰写日期**：2026 年 2 月 8~11 日（持续更新中）
+>
+> **最新变更**（2/11）：添加 OpenClaw 优缺点评估 + Token 成本分析，OpenClaw 暂停运行
 >
 > 如有问题欢迎评论交流！

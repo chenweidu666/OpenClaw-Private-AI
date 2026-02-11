@@ -132,7 +132,7 @@ chmod +x install.sh config-menu.sh
 
 ## 4. 接入阿里云 Qwen3 大模型
 
-OpenClaw 支持任何 OpenAI 兼容的 API。当前方案使用 **3060 工作站本地 vLLM 推理 Qwen3-8B-AWQ 作为主力模型**，阿里云 DashScope 作为备用回退。下文以 DashScope 配置为例（本地 vLLM 配置类似，只需更改 baseUrl）。
+OpenClaw 支持任何 OpenAI 兼容的 API。当前方案使用**阿里云 DashScope Qwen3-14B 作为主力模型**（纯云端推理），Qwen3-32B 作为可选升级。
 
 ### 4.1 获取 API Key
 
@@ -205,17 +205,16 @@ export OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
 ### 4.4 设置默认模型
 
-当前部署使用**本地 3060 工作站**的 vLLM 推理作为主力模型，DashScope 作为备用：
+当前部署使用 DashScope Qwen3-14B 作为主力模型：
 
 ```json
 {
   "agents": {
     "defaults": {
       "model": {
-        "primary": "local-3060/qwen3-8b"
+        "primary": "openai-custom/qwen3-14b"
       },
       "models": {
-        "local-3060/qwen3-8b": {},
         "openai-custom/qwen3-14b": {},
         "openai-custom/qwen3-32b": {}
       }
@@ -224,13 +223,11 @@ export OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 }
 ```
 
-> **自动回退**：Docker 容器的 `entrypoint.sh` 会在启动时探测 3060 健康状态。如果 3060 离线，自动将 primary 切换为 `openai-custom/qwen3-14b`（云端备用）。
-
 命令行切换：
 
 ```bash
 source ~/.openclaw/env
-openclaw models set "local-3060/qwen3-8b"
+openclaw models set "openai-custom/qwen3-14b"
 openclaw models list  # 确认当前模型
 ```
 
@@ -243,7 +240,7 @@ openclaw agent --agent main --message "你好，你是什么模型？"
 
 返回正常回复即说明 OpenClaw + 模型已经跑通。
 
-> **当前部署**：OpenClaw 运行在 NAS Docker 容器中，使用 3060 工作站本地 Qwen3-8B-AWQ 推理。详见 README.md 中的架构说明。
+> **当前部署**：OpenClaw 运行在 NAS Docker 容器中，使用 DashScope Qwen3-14B 云端 API 推理。详见 README.md 中的架构说明。
 
 ---
 

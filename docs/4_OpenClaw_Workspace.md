@@ -41,7 +41,7 @@ OpenClaw 最独特的设计之一就是 **Workspace 文件系统**——通过�
 ```markdown
 # 我是谁
 
-我是 cw 的私人AI助手，基于 Qwen3-8B 模型运行（本地 3060 vLLM 推理）。
+我是 cw 的私人AI助手，基于 Qwen3-14B 模型运行（DashScope 云端 API）。
 通过 OpenClaw 平台运行（NAS Docker 容器），支持飞书聊天。
 
 ## 性格
@@ -66,7 +66,7 @@ OpenClaw 最独特的设计之一就是 **Workspace 文件系统**——通过�
 名字：AI 助手
 主人：cw
 语言：中文
-当前模型：Qwen3-8B（本地 vLLM，3060 工作站）
+当前模型：Qwen3-14B（DashScope 云端 API）
 部署：NAS Docker 容器 → 飞书 WebSocket
 时区：Asia/Shanghai
 ```
@@ -85,11 +85,10 @@ OpenClaw 最独特的设计之一就是 **Workspace 文件系统**——通过�
 ## SSH 主机与设备清单
 | 别名 | IP | 设备 | 用途 |
 |------|-----|------|------|
-| 3060 | 192.168.31.117 | 台式机 (RTX 3060 12GB) | vLLM 推理节点 |
 | nas  | 192.168.31.10  | 绿联 DH4300 Plus      | OpenClaw 宿主机 + 存储 |
 ```
 
-> **设计变更**（2026-02-11）：切换到本地 8B 模型后，上下文窗口有限（24K tokens）。TOOLS.md 从详细的自定义工具列表精简为核心环境信息，将 token 空间留给实际对话。
+> **设计变更**（2026-02-11）：精简系统提示词后，TOOLS.md 从详细的自定义工具列表精简为核心环境信息。当前使用云端 Qwen3-14B（131K 上下文），但保持精简的设计更加聚焦实用。
 
 ---
 
@@ -114,18 +113,18 @@ OpenClaw 内置了**持久记忆**能力——AI 可以跨会话、跨渠道记�
 ## 系统环境
 - 运行在 NAS Docker 容器中
 - NAS: 绿联 DH4300+ (RK3588C / 8GB / Debian 12)
-- GPU 推理: 3060 工作站 vLLM Qwen3-8B-AWQ
+- 模型: DashScope Qwen3-14B（云端 API）
 
 ## OpenClaw 配置
-- 主力模型: Qwen3-8B（本地 vLLM）
-- 备用模型: Qwen3-14B（DashScope 云端）
+- 主力模型: Qwen3-14B（DashScope 云端 API）
+- 可选升级: Qwen3-32B（DashScope）
 - 渠道: 飞书 WebSocket
 - 工具: 23 个内置工具（无自定义工具）
 
 ## 重要记录
-1. 3060 离线时自动回退云端模型
+1. 纯云端 API 推理，无需本地 GPU
 2. 启动后自动发飞书通知
-3. 上下文窗口 24K tokens，系统提示 ~8K
+3. 上下文窗口 131K tokens
 ```
 
 > **注意**：`MEMORY.md` 中不要放敏感信息（密码、API Key 等），因为它会被注入到每次 AI 会话的上下文中。
