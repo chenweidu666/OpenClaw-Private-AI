@@ -511,7 +511,7 @@ OpenClaw 支持通过**插件系统** (`api.registerTool()`) 将自定义功能�
 {
   plugins: {
     load: {
-      paths: ["/home/chenwei/Desktop/4_openclaw/1_OpenClawProject/extensions/custom-skills"]
+      paths: ["/path/to/your/project/extensions/custom-skills"]
     }
   }
 }
@@ -1137,7 +1137,7 @@ function validateCommand(cmd: string): void {
 
 **踩坑**：`feishu_bitable_*` 的 6 个工具不受上述配置控制——OpenClaw 源码中 `bitable.ts` 的注册函数没有检查 `tools` 配置。
 
-**修复**：直接 patch 宿主机上的 OpenClaw 源码 `/home/cw/.nvm/.../openclaw/extensions/feishu/src/bitable.ts`，在 `registerFeishuBitableTools()` 开头添加：
+**修复**：直接 patch 宿主机上的 OpenClaw 源码 `~/.nvm/.../openclaw/extensions/feishu/src/bitable.ts`，在 `registerFeishuBitableTools()` 开头添加：
 
 ```typescript
 const toolsCfg = feishuCfg.tools as Record<string, boolean> | undefined;

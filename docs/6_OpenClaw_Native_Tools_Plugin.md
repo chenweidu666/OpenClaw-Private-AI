@@ -290,7 +290,7 @@ async execute(_id: string, params: { city?: string }) {
 在 `openclaw.json` 中配置 `plugins.load.paths` 指向插件目录：
 
 ```bash
-openclaw config set plugins.load.paths '["/home/chenwei/Desktop/4_openclaw/1_OpenClawProject/extensions/custom-skills"]'
+openclaw config set plugins.load.paths '["/path/to/your/project/extensions/custom-skills"]'
 ```
 
 ### 4.2 重启与验证
