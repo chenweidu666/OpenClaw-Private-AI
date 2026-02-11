@@ -12,15 +12,13 @@
 
 ## 项目亮点
 
-- **双机协同架构**：绿联 NAS DH4300+（7×24 低功耗调度中心 + 5.4T 持久存储）+ 3060 工作站（GPU 推理），局域网互联
-- **5 个实战 Skill**：系统信息、天气查询推送、个人知识库、NAS 文件搜索、B站视频自动总结
-- **B站视频一键总结**：飞书发一个链接 → 3060 下载到 NAS → Whisper GPU 转写 → OpenClaw Qwen API 总结 → NAS 存档
-- **零成本语音转写**：利用闲置 3060 GPU 运行 faster-whisper，无需云端 ASR 付费，音视频数据不出局域网
-- **NAS 一体化**：OpenClaw Gateway 直接运行在 NAS 上，存储本地直读，3060 工作站通过 SMB 挂载写入
-- **飞书原生集成**：通过飞书对话即可操控 AI 助手，支持工具调用、文件搜索、视频总结等
-- **原生 Function Calling 插件**：通过自定义插件将 Skill 注册为原生工具，不依赖上下文，100% 确定性调用
-- **完整踩坑记录**：15 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
-- **NAS 作为主机的实践**：RK3588C ARM64 平台运行 OpenClaw + Node.js 的完整实战经验
+- **双机协同架构**：绿联 NAS DH4300+（7×24 低功耗调度中心 + 5.4T 持久存储）+ 3060 工作站（vLLM 本地推理），局域网互联
+- **本地大模型推理**：3060 工作站通过 vLLM 运行 Qwen3-8B-AWQ（量化），24000 token 上下文，零 API 成本；3060 离线时自动回退到云端 Qwen3-14B
+- **系统提示词精简实战**：从 34 工具 → 23 工具，8B 模型上下文占用从 ~14K tokens 压缩到 ~8K tokens，完整记录裁剪决策过程
+- **Docker 隔离部署**：OpenClaw 运行在 Docker 容器，非 root + 只读挂载 + cap_drop ALL + no-new-privileges，启动自动通知飞书
+- **飞书原生集成**：WebSocket 长连接收发消息，启动/重启自动发送飞书通知
+- **完整踩坑记录**：15+ 个踩坑案例 + 详细诊断过程 + 解决方案，可直接复用
+- **NAS 作为主机的实践**：RK3588C ARM64 平台运行 OpenClaw + Node.js + Docker 的完整实战经验
 
 ---
 
@@ -34,29 +32,23 @@ graph TB
         subgraph NAS["💾 绿联 NAS DH4300+ — 调度中心 + 存储"]
             direction TB
             N_HW["RK3588C / 8GB / Debian 12<br/>3.6T + 1.8T 双卷 · 7×24 运行"]
-            N1["OpenClaw Gateway"]
-            N_PLUGIN["custom-skills 插件<br/>5 个原生 Function Calling 工具"]
-            N2["Qwen3-32B 对话<br/>(阿里云 DashScope API)"]
-            N3["Nginx Web UI"]
+            N1["OpenClaw Gateway<br/>(Docker 容器)"]
             N4["飞书 WebSocket"]
-            N5["视频/音频/转写存档"]
-            N6["NAS 文件搜索（本地 find）"]
+            N_NOTIFY["启动自动通知飞书"]
+            N5["NAS 本地存储"]
         end
 
-        subgraph GPU["⚡ 3060 GPU 工作站 — 转写节点"]
+        subgraph GPU["⚡ 3060 GPU 工作站 — LLM 推理节点"]
             direction TB
             G_HW["i5-13490F / 32GB / RTX 3060 12GB"]
-            G1["FastAPI :8090"]
-            G2["Whisper large-v3 转写"]
-            G4["systemd 开机自启"]
+            G1["vLLM :8000<br/>Qwen3-8B-AWQ"]
+            G4["Docker · 开机自启"]
         end
     end
 
-    USER["👤 用户<br/>飞书 / Web UI"] -->|"对话请求"| N4
-    USER -->|"HTTPS"| N3
-    N1 -->|"HTTP :8090<br/>视频下载+转写"| G1
-    G1 -->|"SMB 挂载<br/>视频+转写结果直写 NAS"| N5
-    N2 -.->|"API 调用"| CLOUD["☁️ 阿里云 DashScope"]
+    USER["👤 用户<br/>飞书"] -->|"对话请求"| N4
+    N1 -->|"OpenAI API :8000<br/>本地推理（主力）"| G1
+    N1 -.->|"API 回退<br/>（3060 离线时）"| CLOUD["☁️ 阿里云 DashScope<br/>Qwen3-14B 备用"]
 
     style NAS fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     style GPU fill:#fff3e0,stroke:#e65100,stroke-width:2px
@@ -65,38 +57,41 @@ graph TB
     style CLOUD fill:#fce4ec,stroke:#c62828,stroke-width:1px
 ```
 
-**数据流示例 — B站视频一键总结**：
+**数据流示例 — 本地模型对话 + 自动回退**：
 
 ```mermaid
 sequenceDiagram
     participant U as 👤 用户 (飞书)
-    participant N as 💾 NAS (DH4300+)<br/>OpenClaw Gateway
-    participant G as ⚡ 3060 工作站<br/>GPU 转写
+    participant N as 💾 NAS (DH4300+)<br/>OpenClaw Docker
+    participant G as ⚡ 3060 工作站<br/>vLLM Qwen3-8B
+    participant C as ☁️ DashScope<br/>Qwen3-14B 备用
 
-    U->>N: 发送 B站链接
-    N->>N: AI function call cw_bilibili_summary
-    N->>G: POST /api/transcribe (URL)
-    G->>G: yt-dlp 下载视频
-    G->>G: ffmpeg 提取音频 (本地临时)
-    G->>G: Whisper large-v3 语音转写
-    G->>N: SMB 挂载直写：video + transcript.txt / .srt / info.json
-    G-->>N: 返回转写文本 + 元数据
-    N->>N: Qwen API (云端) 生成结构化总结
-    N-->>U: 飞书回复视频总结
-    Note over U,N: NAS 负责调度+存储，3060 负责 GPU 转写，Qwen API 负责 AI 总结
+    Note over N: 容器启动 → 健康检查 3060
+    alt 3060 在线
+        N->>N: 配置 primary = local-3060/qwen3-8b
+    else 3060 离线
+        N->>N: 自动回退 primary = cloud/qwen3-14b
+    end
+    N->>U: 飞书通知：OpenClaw 已重启 + 当前模型
+
+    U->>N: 飞书发消息
+    alt 使用本地模型
+        N->>G: OpenAI API /v1/chat/completions
+        G-->>N: 模型回复（tool calling 支持）
+    else 使用云端备用
+        N->>C: DashScope API
+        C-->>N: 模型回复
+    end
+    N-->>U: 飞书回复
 ```
 
 ---
 
-## 已实现的 Skill
+## 自定义 Skill（已全部清理）
 
-| # | Skill | 类型 | 功能 | 技术栈 |
-|---|-------|------|------|--------|
-| 1 | **system_info** 🖥️ | 命令执行型 | 读取硬件/软件/温度信息 | bash + sensors |
-| 2 | **weather** 🌤️ | 命令执行 + 定时推送 | 天气查询 + 飞书每 2h 推送 | wttr.in + cron + Webhook |
-| 3 | **personal_info** 👤 | 纯数据型 | 个人知识库问答 | SKILL.md 知识注入 |
-| 4 | **nas_search** 🗄️ | 深度搜索型 | NAS 文件搜索（SSH 比 SMB 快 10x+） | SSH + find/du |
-| 5 | **bilibili_summary** 📺 | API 服务型 | B站视频：3060 转写 + Qwen API 总结 | 3060 Whisper + DashScope API |
+> **2026-02-11**：所有自定义 Skill 和工具已清理。原因：切换到本地 8B 模型后上下文窗口有限（24K tokens），需要精简系统提示词。原有 5 个自定义 Skill（system_info / weather / nas_search / personal_info / bilibili_summary）及其 Function Calling 工具已移除，后续根据需要重新开发轻量版本。
+>
+> 保留 OpenClaw 内置的 23 个核心工具（文件读写、Shell 执行、网页搜索、浏览器、定时任务、消息、记忆等）。
 
 ---
 
@@ -108,8 +103,8 @@ sequenceDiagram
 | 2 | [Nginx HTTPS Web UI](./docs/3_OpenClaw_Nginx_WebUI.md) | Nginx 反向代理、自签名 SSL、局域网 Web UI 访问 |
 | 3 | [Workspace 自定义指南](./docs/4_OpenClaw_Workspace.md) | SOUL.md / IDENTITY.md / TOOLS.md 定义 AI 人格与能力 + 模型选型对比 |
 | 4 | [Skill 开发指南](./docs/5_OpenClaw_Skills.md) | Skill 原理、实战案例（含 Qwen 费用监控）、3060 GPU 转写服务架构、本地 Whisper 选型分析 |
-| 5 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、5 个工具实战、踩坑总结 |
-| — | **踩坑记录与时间线** | 15 个踩坑案例、最佳实践、部署时间线、功能路线图（见本文下方） |
+| 5 | [**原生工具插件开发**](./docs/6_OpenClaw_Native_Tools_Plugin.md) | 自定义插件 Function Calling 原理、开发指南、踩坑总结（自定义工具已清理，保留框架） |
+| — | **踩坑记录与时间线** | 15+ 个踩坑案例、最佳实践、部署时间线、裁剪决策记录、功能路线图（见本文下方） |
 
 ---
 
@@ -136,8 +131,8 @@ openclaw agent --agent main --message "你好"
 
 | 设备 | 角色 | 规格 | 说明 |
 |------|------|------|------|
-| 绿联 DH4300+ NAS | **OpenClaw 调度中心 + 持久存储** | RK3588C / 8GB / 3.6T+1.8T 双卷 | Debian 12，7×24 运行，Gateway + Nginx + 飞书 + 存储一体 |
-| RTX 3060 工作站 | GPU 推理节点 | i5-13490F / 32GB / RTX 3060 12GB | Whisper 转写，systemd 开机自启 |
+| 绿联 DH4300+ NAS | **OpenClaw 调度中心 + 持久存储** | RK3588C / 8GB / 3.6T+1.8T 双卷 | Debian 12，7×24 运行，Docker 容器运行 Gateway + 飞书 + 存储一体 |
+| RTX 3060 工作站 | **LLM 推理节点** | i5-13490F / 32GB / RTX 3060 12GB | vLLM 运行 Qwen3-8B-AWQ（量化），OpenAI 兼容 API :8000，Docker 开机自启 |
 
 ### 为什么选 NAS 作为主机？
 
@@ -831,6 +826,137 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | **ARM64 NAS 用 nvm 装 Node.js** | apt 方式在 UGOS 上有依赖冲突，nvm 在用户空间安装最省心。后台脚本需 `source nvm.sh` |
 | **ARM64 上直接编辑 JSON** | OpenClaw CLI 在 ARM64 上极慢，`openclaw config set` 可能卡死。直接编辑 `openclaw.json` 更快更可控 |
 | **Gateway restart 要先 stop** | `systemctl --user restart` 有时杀不干净旧进程，导致端口占用无限重启。稳妥做法：先 `stop` → 确认进程已退出 → 再 `start` |
+| **Exec Approvals 白名单** | 创建 `~/.openclaw/exec-approvals.json`，设置 `security: "allowlist"`，只放行查询类命令 |
+| **插件命令黑名单** | `index.ts` 中 `DANGEROUS_PATTERNS` 拦截 sudo/rm -rf/dd/shutdown 等危险操作 |
+| **AGENTS.md 分级安全规则** | 明确三级权限：绝对禁止（sudo/rm -rf）→ 需确认（安装软件/改配置）→ 可自由执行（读取/查询） |
+| **Docker 隔离容器** | OpenClaw 运行在 Docker 容器：node 用户（UID 1000）+ 代码只读挂载 + cap_drop ALL + no-new-privileges + 2GB 内存限制 |
+| **容器构建用宿主机包** | ARM64 NAS 上 npm install 有 SSH/git 问题，用 `prepare.sh` 从宿主机复制已安装的 OpenClaw 到 Docker build context |
+
+---
+
+## 安全加固
+
+### 风险分析
+
+OpenClaw 作为 AI Agent 拥有 shell 执行能力，默认配置下权限几乎不受限：
+
+| 风险点 | 说明 | 危险等级 |
+|--------|------|:--------:|
+| 内置 `exec` 工具 | AI 可执行任意 shell 命令，不限于注册的工具 | **极高** |
+| 自定义插件 | `runScript()` / `runScriptAsync()` 直接调用 `execSync`/`exec` | **高** |
+| SSH 远程访问 | 可 SSH 到 3060 工作站执行命令 | **高** |
+| NAS 全量存储 | AI 可读取所有 NAS 文件（视频、照片、文档） | 中 |
+| SOUL.md / AGENTS.md | 软性规则（"不要删文件"），模型可能无视 | 低（仅约束力） |
+
+### 已实施的安全措施（4 层防御）
+
+#### 第 1 层：Exec Approvals（框架级白名单）
+
+创建 `~/.openclaw/exec-approvals.json`，限制 AI 只能执行白名单中的命令：
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "security": "allowlist",
+    "ask": "on-miss",
+    "askFallback": "deny",
+    "autoAllowSkills": true
+  },
+  "agents": {
+    "main": {
+      "security": "allowlist",
+      "askFallback": "deny",
+      "allowlist": [
+        { "pattern": "*/bash" },
+        { "pattern": "*/grep" },
+        { "pattern": "*/cat" },
+        { "pattern": "*/ls" },
+        { "pattern": "*/find" },
+        { "pattern": "*/df" },
+        { "pattern": "*/free" },
+        { "pattern": "*/sensors" },
+        { "pattern": "*/curl" },
+        { "pattern": "*/python3" },
+        { "pattern": "*/ssh" },
+        { "pattern": "*/systemctl" }
+      ]
+    }
+  }
+}
+```
+
+**关键设置**：
+- `security: "allowlist"` — 只允许白名单中的命令
+- `askFallback: "deny"` — 无法弹窗审批时默认拒绝
+- 白名单只包含**查询类**命令，不含 `rm`、`sudo`、`chmod` 等
+
+#### 第 2 层：Tool Policy（openclaw.json）
+
+在主配置中设置 exec 工具的安全策略：
+
+```json
+{
+  "tools": {
+    "exec": {
+      "security": "allowlist",
+      "host": "gateway",
+      "safeBins": ["jq", "grep", "cut", "sort", "uniq", "head", "tail", "tr", "wc"]
+    }
+  }
+}
+```
+
+#### 第 3 层：插件命令黑名单（index.ts）
+
+在自定义插件的 `runScript()` / `runScriptAsync()` 中加入危险命令正则过滤：
+
+```typescript
+const DANGEROUS_PATTERNS = [
+  /\brm\s+(-[rfRF]+\s+|.*\/)/,  // rm -rf
+  /\bsudo\b/,                     // sudo
+  /\bmkfs\b/,                     // 格式化
+  /\bdd\s+.*of=/,                 // dd 写入
+  /\bshutdown\b/,                 // 关机
+  /\breboot\b/,                   // 重启
+  /\bcurl\b.*\|\s*\bbash\b/,     // curl | bash
+  /\/etc\/shadow/,                // 密码文件
+  /\.ssh\/.*_key/,                // SSH 私钥
+  // ... 共 18 条规则
+];
+
+function validateCommand(cmd: string): void {
+  for (const pattern of DANGEROUS_PATTERNS) {
+    if (pattern.test(cmd)) {
+      throw new Error(`🚫 命令被安全策略拦截`);
+    }
+  }
+}
+```
+
+每条命令执行前都会过 `validateCommand()` 校验，匹配到危险模式立即拒绝。
+
+#### 第 4 层：Workspace 安全规则（AGENTS.md）
+
+将模糊的"Don't run destructive commands"改为明确的分级权限清单：
+
+| 等级 | 操作 | 示例 |
+|:----:|------|------|
+| **🚫 绝对禁止** | 特权命令 | `sudo`、`rm -rf`、`dd`、`shutdown`、`passwd` |
+| **⚠️ 需确认** | 有副作用的操作 | `pip install`、修改 `/etc/`、创建 cron、远程写入 |
+| **✅ 可自由执行** | 只读查询 | 读文件、搜索、查温度、查天气、查账单 |
+
+### 安全效果
+
+| 指标 | 加固前 | 加固后 |
+|------|--------|--------|
+| exec 工具 | 任意命令 | 白名单 + 黑名单双重过滤 |
+| sudo 权限 | 可用（密码可获取） | 插件层拦截 + AGENTS.md 禁止 |
+| 文件删除 | 无限制 | `rm -rf` 被正则拦截 |
+| 远程执行 | SSH 无限制 | SSH 仍保留（读取 3060 信息），但危险命令被拦截 |
+| 审批机制 | 无 | `askFallback: "deny"` — 未知命令默认拒绝 |
+
+> **注意**：这些措施是**纵深防御**而非绝对安全。已通过 Docker 容器实现进一步隔离：非 root 运行、只读挂载、cap_drop ALL、no-new-privileges。详见 `docker/` 目录。
 
 ---
 
@@ -876,12 +1002,23 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 | ✅ | 2026-02-10 22:00 | **NAS 端全量配置恢复**：DashScope Qwen3 API + 飞书 WebSocket 机器人 + 5 个原生工具插件 |
 | ✅ | 2026-02-10 22:30 | **NAS 端到端验证成功**：飞书收发消息正常，AI 通过 Qwen3-14B 回复，飞书文档/Wiki/多维表格工具已加载 |
 | ✅ | 2026-02-10 23:00 | 更新全部文档：README.md 架构图重绘、踩坑记录更新、部署指南适配 NAS |
+| ✅ | 2026-02-11 | **安全加固 4 层防御**：exec-approvals 白名单 + tool policy + 插件命令黑名单（18 条规则）+ AGENTS.md 分级权限 |
+| ✅ | 2026-02-11 | **Docker 隔离环境**：Dockerfile + docker-compose.yml + entrypoint.sh，OpenClaw 运行在独立容器（node:22-slim + UID 1000），只读挂载代码/配置，sessions 持久化卷，2GB 内存限制，no-new-privileges |
+| ✅ | 2026-02-11 | **本地模型部署**：3060 工作站通过 vLLM Docker 运行 Qwen3-8B-AWQ，`--max-model-len 24000 --enable-auto-tool-choice --tool-call-parser hermes`，替代云端 DashScope 作为主力模型 |
+| ✅ | 2026-02-11 | **自动模型回退**：entrypoint.sh 启动时探测 3060 健康状态，在线则用本地模型，离线自动切回云端 Qwen3-14B |
+| ✅ | 2026-02-11 | **飞书启动通知**：容器启动后自动通过飞书 API 发消息给用户，告知重启时间、当前模型、Gateway 状态 |
+| ✅ | 2026-02-11 | **系统提示词大裁剪**：34 工具 → 23 工具（详见下方裁剪决策记录） |
+| ✅ | 2026-02-11 | 关闭全部 5 个自定义 Skill/工具：system_info、weather、nas_search、personal_info、bilibili_summary |
+| ✅ | 2026-02-11 | 关闭 11 个飞书内置工具：doc / wiki / drive / scopes / bitable（get_meta/list_fields/list_records/get_record/create_record/update_record），patch bitable.ts 源码使其尊重 tools.doc=false |
+| ✅ | 2026-02-11 | **上下文窗口调优**：vLLM max-model-len 24000 ↔ OpenClaw contextWindow 24000，系统提示 ~8K tokens，剩余 ~16K tokens 供对话 |
 
 > 从零到功能完备的 OpenClaw 私人 AI 助手（还在持续进化中）。
 >
 > **2/9 回顾**：完成了 bilibili_summary — 第一个 API 服务型 Skill，实现双机协同（NAS + 3060 工作站）的分布式架构。过程中踩了多个坑（NAS 传输、端口冲突、Qwen3 API、对话历史污染），均已解决并记录。最终端到端验证成功：飞书发送B站链接 → AI 自动匹配 Skill → 3060 工作站完成下载+转写 → OpenClaw Qwen API 总结 → AI 回复飞书用户。
 >
 > **2/10 回顾**：发现并修复了坑 10（nativeSkills）和坑 11（上下文溢出）。最重要的突破是**坑 12**：深入分析 OpenClaw 源码后发现，Skill 的上下文注入机制对 14B/32B 模型都不够可靠，最终通过**插件系统 `api.registerTool()`** 将 5 个自定义 Skill 注册为原生 function calling 工具，实现了**不依赖上下文的确定性调用**。架构优化：NAS 作为主机后 `cw_nas_search` 改为本地 `find` 执行（无需 SSH），bilibili_summary v6 实现转写与总结解耦。晚间完成**架构迁移**：彻底放弃不稳定的 Surface Pro，在绿联 NAS 上通过 nvm 安装 Node.js 22 + OpenClaw，恢复全部配置并验证成功。
+>
+> **2/11 回顾**：完成三项关键架构升级。**第一**，安全加固 + Docker 容器化，4 层纵深防御确保 AI 无法执行危险操作。**第二**，部署本地 Qwen3-8B-AWQ 到 3060 工作站，通过 vLLM 提供 OpenAI 兼容 API，实现零 API 成本推理，同时保留云端自动回退。**第三，也是最关键的**——**系统提示词大裁剪**：由于 8B 模型上下文窗口有限（24K tokens），必须大幅精简工具数量。从 34 个工具裁剪到 23 个，删除全部 5 个自定义工具 + 11 个飞书文档类工具。其中飞书 bitable 工具因不尊重 `tools` 配置，需直接 patch OpenClaw 源码 (`bitable.ts`) 才能关闭。裁剪后系统提示 ~8K tokens，剩余 ~16K tokens 可供对话——8B 模型终于能正常回复了。
 
 ---
 
@@ -889,27 +1026,140 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 
 | 状态 | 功能 | 说明 |
 |:----:|------|------|
-| ✅ | OpenClaw 基础部署 | NAS 上安装 + 配置 Qwen3-14B + Gateway |
+| ✅ | OpenClaw 基础部署 | NAS Docker 容器 + 飞书 WebSocket + Gateway |
+| ✅ | **本地 LLM 推理** | 3060 工作站 vLLM 运行 Qwen3-8B-AWQ，零 API 成本；离线时自动回退云端 Qwen3-14B |
 | ✅ | 飞书双向机器人 | 企业自建应用 + WebSocket 长连接，主要 IM 渠道 |
-| ✅ | Nginx HTTPS | 局域网 Web UI（端口 7860） |
-| ✅ | system_info Skill | AI 读取 NAS 硬件/软件/网络信息 |
-| ✅ | sudo 命令执行 | AI 可管理 NAS 服务、查询系统状态 |
+| ✅ | **飞书启动通知** | 容器启动/重启后自动发飞书消息，通知当前模型和状态 |
+| ✅ | Docker 隔离环境 | node 用户（UID 1000）+ 只读挂载 + cap_drop ALL + no-new-privileges + 2GB 内存限制 |
+| ✅ | 安全加固 | 4 层纵深防御：exec 白名单 + tool policy + 插件命令黑名单 + 分级权限 |
+| ✅ | **系统提示词裁剪** | 从 34 工具精简到 23 工具，关闭飞书文档类 11 个工具 + 5 个自定义工具，提示词 ~8K tokens |
 | ✅ | 记忆系统 | MEMORY.md 长期记忆 + 每日日志 |
-| ✅ | weather Skill | 天气查询 + 飞书每 2 小时推送 |
-| ✅ | nas_search Skill | NAS 本地深度搜索（`find`/`du` 直接执行），简单文件访问直接读本地路径 |
-| ✅ | bilibili_summary Skill | B站视频：3060 下载+转写 → NAS 存储 → OpenClaw Qwen API 总结 |
-| ✅ | **原生 Function Calling 插件** | 5 个 Skill 注册为 `cw_*` 原生工具，不依赖上下文，100% 确定性调用 |
+| ⛔ | ~~全部自定义 Skill~~ | ~~system_info / weather / nas_search / personal_info / bilibili_summary~~ — **已清理**（8B 模型上下文优化） |
+| ⛔ | ~~飞书文档工具~~ | ~~doc / wiki / drive / bitable / scopes~~ — **已关闭**（tools 配置 + 源码 patch） |
+| ⛔ | ~~原生 Function Calling 插件~~ | ~~5 个自定义工具~~ — **已清空**，保留插件框架 |
 | ⏳ | 小爱音箱语音交互 | Mi-GPT 已部署，等待小米账号安全验证生效 |
-| ❌ | bilibili 纯 API 备用链路 | 调研后放弃：DashScope Paraformer 不支持本地文件直传，3060 方案已足够 |
-| 📋 | 更多 Skill | 日程管理、Docker 管理、智能家居 |
-| 📋 | Heartbeat 定时任务 | AI 主动推送日历提醒 |
+| 📋 | 新一代轻量 Skill | 为 8B 模型重新设计的轻量工具 |
 | 📋 | MCP Server 集成 | 通过 Model Context Protocol 接入外部工具 |
 | 📋 | 多 Agent 协作 | Coding Agent、Research Agent 等 |
 | 📋 | Home Assistant 联动 | AI 控制智能家居 |
 | 📋 | 知识库 RAG | 私有文档库问答 |
-| 📋 | 自动化工作流 | AI 监控邮件/代码仓库/服务器 |
 
-> ✅ = 已完成 &nbsp; ⏳ = 进行中 &nbsp; 📋 = 待完成
+> ✅ = 已完成 &nbsp; ⏳ = 进行中 &nbsp; 📋 = 待完成 &nbsp; ⛔ = 已关闭/已清理
+
+---
+
+## 系统提示词裁剪决策记录（2026-02-11）
+
+### 背景
+
+从云端 Qwen3-14B/32B 切换到本地 3060 工作站的 Qwen3-8B-AWQ 后，上下文窗口从 98K tokens 骤降到 24K tokens。而 OpenClaw 默认加载的系统提示词 + 工具 Schema 高达 ~14K tokens（34 个工具），留给实际对话的空间仅 ~10K tokens，8B 模型频繁出现空回复或上下文溢出。
+
+**核心矛盾**：工具越多 → 系统提示越大 → 对话空间越小 → 8B 模型回复质量越差。必须裁剪。
+
+### 裁剪前状态
+
+| 类别 | 数量 | 占用 |
+|------|:----:|------|
+| OpenClaw 内置工具 | 18 个 | ~6K tokens |
+| 飞书文档/云盘/Wiki/多维表格 | 11 个 | ~5K tokens |
+| 自定义 Function Calling 工具 | 5 个 | ~3K tokens |
+| **总计** | **34 个** | **~14K tokens** |
+
+### 裁剪决策
+
+#### 第一刀：删除全部自定义工具（5 个 → 0 个）
+
+| 工具 | 原功能 | 删除原因 |
+|------|--------|----------|
+| `cw_system_info` | 读取 NAS 硬件信息 | Docker 容器内信息有限，价值低 |
+| `cw_weather` | 天气查询 | 依赖外部 API + cron，维护成本 > 收益 |
+| `cw_nas_search` | NAS 文件搜索 | Docker 容器只读挂载，find 权限受限 |
+| `cw_bilibili_summary` | B站视频转写总结 | 依赖 3060 Whisper 服务（现已改为 vLLM），流程复杂 |
+| `cw_qwen_billing` | DashScope 费用查询 | 已切本地模型，云端费用不再是主要关注点 |
+
+**操作**：清空 `extensions/custom-skills/index.ts` 中所有 `api.registerTool()` 调用，删除 `skills/` 目录下全部子目录。
+
+#### 第二刀：关闭飞书文档类工具（11 个 → 0 个）
+
+| 工具组 | 包含工具 | 删除原因 |
+|--------|----------|----------|
+| 飞书文档 | `feishu_doc` | 当前仅用飞书做 IM 通讯，不需要操作文档 |
+| 飞书 Wiki | `feishu_wiki` | 无知识库使用场景 |
+| 飞书云盘 | `feishu_drive` | 文件存储用 NAS 本地 |
+| 飞书权限 | `feishu_app_scopes` | 仅开发时需要，日常无用 |
+| 飞书多维表格 | `feishu_bitable_*`（6 个） | 无多维表格使用场景 |
+
+**操作**：在 `openclaw.json` 的 `channels.feishu.tools` 中设置：
+
+```json
+"tools": {
+  "doc": false,
+  "wiki": false,
+  "drive": false,
+  "perm": false,
+  "scopes": false
+}
+```
+
+**踩坑**：`feishu_bitable_*` 的 6 个工具不受上述配置控制——OpenClaw 源码中 `bitable.ts` 的注册函数没有检查 `tools` 配置。
+
+**修复**：直接 patch 宿主机上的 OpenClaw 源码 `/home/cw/.nvm/.../openclaw/extensions/feishu/src/bitable.ts`，在 `registerFeishuBitableTools()` 开头添加：
+
+```typescript
+const toolsCfg = feishuCfg.tools as Record<string, boolean> | undefined;
+if (toolsCfg?.doc === false) {
+  api.logger.info?.("feishu_bitable: Skipped (tools.doc=false)");
+  return;
+}
+```
+
+然后通过 `prepare.sh` 将 patch 后的包复制到 Docker build context，重新构建镜像。
+
+### 裁剪后状态
+
+| 类别 | 数量 | 占用 |
+|------|:----:|------|
+| OpenClaw 内置工具 | 18 个 | ~6K tokens |
+| 飞书消息工具 | 5 个 | ~2K tokens |
+| 自定义工具 | 0 个 | 0 |
+| **总计** | **23 个** | **~8K tokens** |
+
+### 效果对比
+
+| 指标 | 裁剪前 | 裁剪后 |
+|------|:------:|:------:|
+| 工具数量 | 34 | **23** (-32%) |
+| 系统提示占用 | ~14K tokens | **~8K tokens** (-43%) |
+| 对话可用空间 | ~10K tokens | **~16K tokens** (+60%) |
+| 8B 模型回复质量 | 频繁空回复 | **稳定回复** |
+
+### 保留的 23 个工具
+
+| # | 工具名 | 类别 | 用途 |
+|:--:|--------|------|------|
+| 1 | `read_file` | 文件 | 读取文件 |
+| 2 | `write_file` | 文件 | 写入文件 |
+| 3 | `edit_file` | 文件 | 编辑文件（搜索替换） |
+| 4 | `multi_edit_file` | 文件 | 批量编辑 |
+| 5 | `list_dir` | 文件 | 列出目录 |
+| 6 | `file_search` | 文件 | 文件名搜索 |
+| 7 | `grep_search` | 文件 | 内容搜索 |
+| 8 | `exec` | 系统 | Shell 命令执行（白名单限制） |
+| 9 | `web_search` | 网络 | 网页搜索 |
+| 10 | `web_read` | 网络 | 读取网页 |
+| 11 | `web_browse` | 网络 | 浏览器操作 |
+| 12 | `heartbeat_create` | 定时 | 创建定时任务 |
+| 13 | `heartbeat_list` | 定时 | 列出定时任务 |
+| 14 | `heartbeat_delete` | 定时 | 删除定时任务 |
+| 15 | `memory_read` | 记忆 | 读取长期记忆 |
+| 16 | `memory_edit` | 记忆 | 编辑长期记忆 |
+| 17 | `message` | 消息 | 发送消息 |
+| 18 | `report` | 系统 | 生成报告 |
+| 19 | `feishu_reply` | 飞书 | 回复消息 |
+| 20 | `feishu_react` | 飞书 | 表情回应 |
+| 21 | `feishu_reply_action` | 飞书 | 回复操作 |
+| 22 | `feishu_message_card` | 飞书 | 发送卡片消息 |
+| 23 | `feishu_thread_reply` | 飞书 | 话题回复 |
 
 ---
 
@@ -922,9 +1172,12 @@ Skill **只在用户提问匹配到 `description` 字段时**才注入上下文�
 - [DashScope OpenAI 兼容模式文档](https://help.aliyun.com/zh/model-studio/developer-reference/compatibility-of-openai-with-dashscope)
 - [飞书开放平台](https://open.feishu.cn/)
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+- [vLLM 文档](https://docs.vllm.ai/)
+- [OpenClaw 安全文档](https://docs.clawd.bot/security)
+- [OpenClaw Exec Approvals](https://docs.clawd.bot/tools/exec-approvals)
 
 ---
 
-> **撰写日期**：2026 年 2 月 8~10 日（持续更新中）
+> **撰写日期**：2026 年 2 月 8~11 日（持续更新中）
 >
 > 如有问题欢迎评论交流！

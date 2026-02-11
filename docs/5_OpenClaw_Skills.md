@@ -23,16 +23,18 @@
 
 **Skill 系统是 OpenClaw 的杀手级特性。** 一个 Markdown 文件 + 一个 Shell 脚本，就能给 AI 增加一种全新能力——不需要改一行 OpenClaw 源码。
 
-> **📌 重要更新**：本项目的 5 个 Skill 已通过**自定义插件**注册为**原生 function calling 工具**（`cw_*`），不再依赖系统提示上下文。Skill 脚本本身不变，插件作为调用入口包装它们。详见 [原生工具插件开发](./6_OpenClaw_Native_Tools_Plugin.md)。
+> **📌 重要更新（2026-02-11）**：所有 5 个自定义 Skill 及其 Function Calling 工具已**全部清理**。原因：切换到本地 Qwen3-8B 模型后上下文窗口有限（24K tokens），需要精简系统提示词（从 34 工具裁剪到 23 工具）。Skills 目录和插件工具注册均已清空，仅保留插件框架供后续使用。
+>
+> 以下内容保留作为**历史参考和开发指南**，记录 Skill 开发的完整方法论。
 
 每个 Skill 一个子目录，存放在 `~/.openclaw/skills/` 下：
 
 ```
-~/.openclaw/skills/
-├── system_info/          # Skill 1
-│   ├── SKILL.md          # 触发条件 + 使用说明
-│   └── gather_info.sh    # 执行脚本
-└── weather/              # Skill 2
+~/.openclaw/skills/       # ← 当前已清空
+├── system_info/          # Skill 1（已删除）
+│   ├── SKILL.md
+│   └── gather_info.sh
+└── weather/              # Skill 2（已删除）
     ├── SKILL.md
     ├── get_weather.sh
     └── weather_feishu_push.sh
@@ -91,39 +93,21 @@ metadata: { "openclaw": { "emoji": "🔧", "requires": { "bins": ["bash"] } } }
 
 ## 2. 实战案例与总览
 
-### 2.1 Skill 总览
+### 2.1 Skill 总览（历史记录）
 
-| # | Skill | 类型 | AI 交互 | 定时推送 |
-|---|-------|------|---------|----------|
-| 1 | **system_info** 🖥️ | 命令执行型 | cw_system_info function call | — |
-| 2 | **weather** 🌤️ | CSV 读取型（已解耦） | cw_weather 读 CSV | 独立 cron 采集 + 飞书推送 |
-| 3 | **nas_search** 🗄️ | 命令执行型 (SSH 远程) | cw_nas_search function call | — |
-| 4 | **bilibili_summary** 📺 | API 服务型 | cw_bilibili_summary function call | — |
-| 5 | **qwen_billing** 💰 | 云 API 查询型 | cw_qwen_billing function call | — |
+> **以下 5 个 Skill 均已于 2026-02-11 清理**，保留此表作为开发参考。
 
-五种 Skill 类型：**命令执行型**（脚本 + exec）、**定时推送型**（脚本 + cron + Webhook）、**纯数据型**（只有 SKILL.md）、**API 服务型**（调用远程 GPU 推理服务）、**云 API 查询型**（调用云厂商管理 API）。
+| # | Skill | 类型 | 状态 | 删除原因 |
+|---|-------|------|:----:|----------|
+| 1 | **system_info** 🖥️ | 命令执行型 | ⛔ 已删除 | Docker 容器内信息有限 |
+| 2 | **weather** 🌤️ | CSV 读取型 | ⛔ 已删除 | 外部 API 依赖，维护成本高 |
+| 3 | **nas_search** 🗄️ | 命令执行型 | ⛔ 已删除 | Docker 容器只读挂载，find 受限 |
+| 4 | **bilibili_summary** 📺 | API 服务型 | ⛔ 已删除 | 3060 已改为 LLM 推理，流程复杂 |
+| 5 | **qwen_billing** 💰 | 云 API 查询型 | ⛔ 已删除 | 已切本地模型，云端费用非关注点 |
 
-```
-~/.openclaw/skills/
-├── system_info/           ← 命令执行型
-│   ├── SKILL.md
-│   └── gather_info.sh
-├── weather/               ← 命令执行 + 定时推送（已解耦到 1_monitor/）
-│   ├── SKILL.md
-│   └── get_weather.sh
-├── nas_search/            ← 命令执行型 (SSH 远程)
-│   ├── SKILL.md
-│   └── nas_search.sh
-├── bilibili_summary/      ← API 服务型 (3060 GPU Whisper 转写)
-│   ├── SKILL.md
-│   └── bilibili_summary.sh
-└── qwen_usage/            ← 云 API 查询型 (阿里云 BSS OpenAPI)
-    ├── SKILL.md
-    ├── query_usage.py
-    └── query_usage.sh
-```
+五种 Skill 类型（设计参考）：**命令执行型**（脚本 + exec）、**定时推送型**（脚本 + cron + Webhook）、**纯数据型**（只有 SKILL.md）、**API 服务型**（调用远程 GPU 推理服务）、**云 API 查询型**（调用云厂商管理 API）。
 
-> **📌 各工具详细文档**已迁移至 [原生工具插件开发 — 第 5 节](./6_OpenClaw_Native_Tools_Plugin.md#5-实战5-个原生工具)。
+> **📌 原工具详细文档**见 [原生工具插件开发 — 第 5 节](./6_OpenClaw_Native_Tools_Plugin.md#5-实战5-个原生工具)（已标注为历史参考）。
 
 ---
 

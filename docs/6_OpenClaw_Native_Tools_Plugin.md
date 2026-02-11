@@ -1,5 +1,7 @@
 # OpenClaw 原生工具插件开发：从上下文依赖到 Function Calling
 
+> **⛔ 状态更新（2026-02-11）**：所有 5 个自定义工具已**全部清理**，插件框架保留。原因：切换到本地 Qwen3-8B 模型后上下文窗口有限（24K tokens），需精简系统提示词（34 工具 → 23 工具）。本文保留作为**开发方法论参考**，记录了完整的插件开发、调试、踩坑过程，后续如需重新开发轻量工具可直接复用。
+>
 > 本文档介绍如何通过 OpenClaw 插件系统将自定义 Skill 注册为**原生 function calling 工具**，实现不依赖系统提示上下文的确定性调用。
 >
 > 返回 [项目总览](../README.md) | 相关文档：[Skill 开发指南](./5_OpenClaw_Skills.md) | [踩坑记录](../README.md#踩坑记录)
@@ -27,10 +29,10 @@
   - [4.3 调试技巧](#43-调试技巧)
 - [5. 实战：5 个原生工具](#5-实战5-个原生工具)
   - [5.1 cw_system_info — 系统信息](#51-cw_system_info--系统信息)
-  - [5.2 cw_weather — 天气查询](#52-cw_weather--天气查询)
-  - [5.3 cw_nas_search — NAS 深度搜索](#53-cw_nas_search--nas-深度搜索)
-  - [5.4 cw_bilibili_summary — B站视频转写+总结](#54-cw_bilibili_summary--b站视频转写总结)
-  - [5.5 cw_qwen_billing — API 费用查询](#55-cw_qwen_billing--api-费用查询)
+  - [5.2 cw_weather — 天气查询（已关闭）](#52-cw_weather--天气查询已关闭)
+  - [5.3 cw_nas_search — NAS 深度搜索（已关闭）](#53-cw_nas_search--nas-深度搜索已关闭)
+  - [5.4 cw_bilibili_summary — B站视频转写+总结（已关闭）](#54-cw_bilibili_summary--b站视频转写总结已关闭)
+  - [5.5 cw_qwen_billing — API 费用查询（已关闭）](#55-cw_qwen_billing--api-费用查询已关闭)
 - [6. 注意事项与踩坑](#6-注意事项与踩坑)
 
 ---
@@ -344,27 +346,21 @@ api.on("before_agent_start", (event: any, ctx: any) => {
 
 ---
 
-## 5. 实战：5 个原生工具
+## 5. 实战：5 个原生工具（⛔ 已全部清理）
 
-### 工具总览
+> **2026-02-11**：所有 5 个自定义工具已从 `index.ts` 中移除，Skills 目录和脚本也已删除。以下内容保留作为**开发参考**。
+>
+> **清理原因**：切换到本地 Qwen3-8B 后，24K token 上下文中系统提示占 ~14K（34 工具），对话空间不足。裁剪到 23 工具（~8K tokens）后，8B 模型才能稳定回复。
 
-| 工具名 | 对应脚本 | 参数 | 超时 |
-|--------|----------|------|------|
-| `cw_system_info` | `gather_info.sh` | `query`: full/cpu/memory/disk/temperature/network/services | 15s |
-| `cw_weather` | `weather_read.sh`（读CSV） | `city`: 城市名（可选，默认南京读CSV秒回） | 15s |
-| `cw_nas_search` | `nas_search.sh` | `action`: search/type/list/tree/size/recent/overview/movies/photos + `keyword` + `path` | 30s |
-| `cw_bilibili_summary` | `bilibili_summary.sh` | `url`: B站链接 + `lang`: auto/zh/ja/en | 10min |
-| `cw_qwen_billing` | `qwen_billing.sh` | `month`: YYYY-MM（可选，默认当月） | 60s |
+### 工具总览（历史记录）
 
-**端到端测试结果**（14B 模型）：
-
-| # | 测试消息 | 调用工具 | 方式 | 状态 |
-|---|----------|----------|------|------|
-| 1 | "电脑温度多少" | `cw_system_info` | function call | ✅ CPU 83°C |
-| 2 | "南京天气" | `cw_weather` | function call | ✅ 8°C 阴天 |
-| 3 | "NAS上有哪些mp4" | `cw_nas_search` | function call | ✅ 按类型搜索成功 |
-| 4 | "总结B站视频 URL" | `cw_bilibili_summary` | function call | ✅ 转写+AI总结 |
-| 5 | "Qwen API花了多少钱" | `cw_qwen_billing` | function call | ✅ 本月 ¥16.97 |
+| 工具名 | 对应脚本 | 状态 | 删除原因 |
+|--------|----------|:----:|----------|
+| ~~`cw_system_info`~~ | ~~`gather_info.sh`~~ | ⛔ 已删除 | Docker 容器内信息有限 |
+| ~~`cw_weather`~~ | ~~`weather_read.sh`~~ | ⛔ 已删除 | 外部 API 依赖，维护成本高 |
+| ~~`cw_nas_search`~~ | ~~`nas_search.sh`~~ | ⛔ 已删除 | Docker 只读挂载，find 受限 |
+| ~~`cw_bilibili_summary`~~ | ~~`bilibili_summary.sh`~~ | ⛔ 已删除 | 3060 已改为 LLM 推理 |
+| ~~`cw_qwen_billing`~~ | ~~`qwen_billing.sh`~~ | ⛔ 已删除 | 已切本地模型 |
 
 ---
 
@@ -457,7 +453,9 @@ api.registerTool({
 
 ---
 
-### 5.2 cw_weather — 天气查询
+### 5.2 cw_weather — 天气查询（已关闭）
+
+> **⛔ 此工具已关闭**：代码中已注释，不再注册为 function calling 工具。
 
 **功能**：查询天气信息（当前天气、温度、湿度、风速、未来预报），默认城市读 CSV 毫秒级响应。
 
@@ -559,7 +557,9 @@ timestamp,city,region,desc,temp_c,feels_c,humidity,wind_speed_kmh,wind_dir,press
 
 ---
 
-### 5.3 cw_nas_search — NAS 深度搜索
+### 5.3 cw_nas_search — NAS 深度搜索（已关闭）
+
+> **⛔ 此工具已关闭**：代码中已注释，不再注册为 function calling 工具。
 
 **功能**：通过 SSH 远程搜索绿联 NAS 上的文件（比 SMB 遍历快 10 倍+）。支持关键词搜索、按类型搜索、目录浏览、磁盘占用、最近修改等 9 种操作。
 
@@ -631,7 +631,9 @@ Volume 2 (数据卷)
 
 ---
 
-### 5.4 cw_bilibili_summary — B站视频转写+总结
+### 5.4 cw_bilibili_summary — B站视频转写+总结（已关闭）
+
+> **⛔ 此工具已关闭**：代码中已注释，不再注册为 function calling 工具。
 
 **功能**：用户发一个 B站链接，自动完成全流程——3060 GPU 下载视频到 NAS、Whisper 语音转写、结果存 NAS，返回转写文本由 OpenClaw Qwen API（云端）生成结构化总结。
 
@@ -799,7 +801,9 @@ journalctl -u bilibili-transcribe -f         # 实时日志
 
 ---
 
-### 5.5 cw_qwen_billing — API 费用查询
+### 5.5 cw_qwen_billing — API 费用查询（已关闭）
+
+> **⛔ 此工具已关闭**：代码中已注释，不再注册为 function calling 工具。
 
 **功能**：查询阿里云 DashScope/百炼 Qwen API 的 token 用量和费用明细——按天、按模型、按 token 类型。
 

@@ -132,7 +132,7 @@ chmod +x install.sh config-menu.sh
 
 ## 4. 接入阿里云 Qwen3 大模型
 
-OpenClaw 支持任何 OpenAI 兼容的 API。阿里云 DashScope 的 Qwen3 系列是国内最好的选择之一——免费额度充足，延迟低，模型能力强。
+OpenClaw 支持任何 OpenAI 兼容的 API。当前方案使用 **3060 工作站本地 vLLM 推理 Qwen3-8B-AWQ 作为主力模型**，阿里云 DashScope 作为备用回退。下文以 DashScope 配置为例（本地 vLLM 配置类似，只需更改 baseUrl）。
 
 ### 4.1 获取 API Key
 
@@ -205,15 +205,17 @@ export OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
 ### 4.4 设置默认模型
 
+当前部署使用**本地 3060 工作站**的 vLLM 推理作为主力模型，DashScope 作为备用：
+
 ```json
 {
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openai-custom/qwen3-14b"
+        "primary": "local-3060/qwen3-8b"
       },
       "models": {
-        "openai-custom/qwen3-4b": {},
+        "local-3060/qwen3-8b": {},
         "openai-custom/qwen3-14b": {},
         "openai-custom/qwen3-32b": {}
       }
@@ -222,26 +224,14 @@ export OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 }
 ```
 
+> **自动回退**：Docker 容器的 `entrypoint.sh` 会在启动时探测 3060 健康状态。如果 3060 离线，自动将 primary 切换为 `openai-custom/qwen3-14b`（云端备用）。
+
 命令行切换：
 
 ```bash
 source ~/.openclaw/env
-openclaw models set "openai-custom/qwen3-14b"
+openclaw models set "local-3060/qwen3-8b"
 openclaw models list  # 确认当前模型
-```
-
-实际执行结果：
-
-```
-$ openclaw models set "openai-custom/qwen3-14b"
-Updated ~/.openclaw/openclaw.json
-Default model: openai-custom/qwen3-14b
-
-$ openclaw models list
-Model                                      Input      Ctx      Local Auth  Tags
-openai-custom/qwen3-14b                    text       128k     no    yes   default,configured
-openai-custom/qwen3-4b                     text       128k     no    yes   configured
-openai-custom/qwen3-32b                    text       128k     no    yes   configured
 ```
 
 ### 4.5 验证连接
@@ -251,14 +241,9 @@ source ~/.openclaw/env
 openclaw agent --agent main --message "你好，你是什么模型？"
 ```
 
-实际执行结果：
+返回正常回复即说明 OpenClaw + 模型已经跑通。
 
-```
-$ openclaw agent --agent main --message "你好，你是什么模型？"
-我是基于阿里云 Qwen3-14B 模型的 AI 助手。需要我帮你做什么吗？
-```
-
-返回正常回复，说明 OpenClaw + Qwen3 已经跑通了！
+> **当前部署**：OpenClaw 运行在 NAS Docker 容器中，使用 3060 工作站本地 Qwen3-8B-AWQ 推理。详见 README.md 中的架构说明。
 
 ---
 

@@ -41,8 +41,8 @@ OpenClaw 最独特的设计之一就是 **Workspace 文件系统**——通过�
 ```markdown
 # 我是谁
 
-我是 cw 的私人AI助手，基于阿里云 Qwen3 系列模型运行，默认使用 qwen3-14b。
-通过 OpenClaw 平台运行，支持飞书和网页端聊天。
+我是 cw 的私人AI助手，基于 Qwen3-8B 模型运行（本地 3060 vLLM 推理）。
+通过 OpenClaw 平台运行（NAS Docker 容器），支持飞书聊天。
 
 ## 性格
 - 友好、简洁、实用
@@ -50,9 +50,9 @@ OpenClaw 最独特的设计之一就是 **Workspace 文件系统**——通过�
 - 不啰嗦，直接给出答案
 
 ## 能力
-- 可以用 `exec` 工具执行 bash 命令，读取本机硬件/软件信息
-- 当用户问电脑配置、品牌、温度、磁盘等问题时，直接执行命令获取真实数据
-- 参考 TOOLS.md 中的命令速查表
+- 使用 OpenClaw 内置的 23 个核心工具（文件读写、Shell 执行、网页搜索等）
+- 可以用 `exec` 工具执行 bash 命令
+- 参考 TOOLS.md 中的工具速查
 
 ## 规则
 - 诚实回答，不确定的事情就说不确定
@@ -66,7 +66,8 @@ OpenClaw 最独特的设计之一就是 **Workspace 文件系统**——通过�
 名字：AI 助手
 主人：cw
 语言：中文
-当前模型：qwen3-14b
+当前模型：Qwen3-8B（本地 vLLM，3060 工作站）
+部署：NAS Docker 容器 → 飞书 WebSocket
 时区：Asia/Shanghai
 ```
 
@@ -75,31 +76,20 @@ OpenClaw 最独特的设计之一就是 **Workspace 文件系统**——通过�
 这是让 AI 知道"**自己能做什么**"的核心文件。OpenClaw 在每次会话开始时会读取 `TOOLS.md`，如果里面没有提及某种能力，AI 就不知道自己可以做。
 
 ```markdown
-# TOOLS.md - 本地工具备忘
+# TOOLS.md - 环境与工具速查
 
-## 系统信息采集 (system_info skill)
+## 工具说明
+当前使用 OpenClaw 内置的 23 个核心工具（文件读写、Shell 执行、网页搜索、定时任务、记忆、飞书消息等）。
+无自定义 Function Calling 工具（已于 2026-02-11 清理，精简系统提示词）。
 
-我可以直接读取这台电脑的硬件和软件信息。
-
-### 一键完整报告
-bash ~/.openclaw/skills/system_info/gather_info.sh
-
-### 常用单项命令
-- 电脑品牌/型号: cat /sys/devices/virtual/dmi/id/board_vendor
-- CPU 型号: grep -m1 'model name' /proc/cpuinfo
-- 内存: free -h
-- 磁盘: df -h
-- 实时温度: sensors
-- 网络 IP: hostname -I
-
-## 本机信息速查
-- 设备: Microsoft Surface Pro
-- CPU: Intel Core i5-7300U @ 2.60GHz
-- 内存: 8GB
-- 系统: Ubuntu 22.04.3 LTS
+## SSH 主机与设备清单
+| 别名 | IP | 设备 | 用途 |
+|------|-----|------|------|
+| 3060 | 192.168.31.117 | 台式机 (RTX 3060 12GB) | vLLM 推理节点 |
+| nas  | 192.168.31.10  | 绿联 DH4300 Plus      | OpenClaw 宿主机 + 存储 |
 ```
 
-> **设计巧思**：`TOOLS.md` 底部的"本机信息速查"是一个双保险——即使模型不主动调用 `exec` 工具，它也能直接从这里读取基本信息回答用户。这对小模型尤其有用。
+> **设计变更**（2026-02-11）：切换到本地 8B 模型后，上下文窗口有限（24K tokens）。TOOLS.md 从详细的自定义工具列表精简为核心环境信息，将 token 空间留给实际对话。
 
 ---
 
@@ -116,27 +106,26 @@ OpenClaw 内置了**持久记忆**能力——AI 可以跨会话、跨渠道记�
 ```markdown
 # MEMORY.md - 长期记忆
 
-> 最后更新：2026-02-08
+> 最后更新：2026-02-11
 
 ## 关于主人
-- 使用 Surface Pro 5，运行 Ubuntu 22.04 LTS
-- 局域网 IP：192.168.1.100
 - 偏好用中文交流，喜欢简洁直接的回答
 
 ## 系统环境
-- OS: Ubuntu 22.04.3 LTS
-- Node.js: v22+
-- Nginx: 反向代理 OpenClaw Web UI，端口 7860
+- 运行在 NAS Docker 容器中
+- NAS: 绿联 DH4300+ (RK3588C / 8GB / Debian 12)
+- GPU 推理: 3060 工作站 vLLM Qwen3-8B-AWQ
 
 ## OpenClaw 配置
-- 默认模型: qwen3-14b
-- 渠道: 飞书 + Web UI
-- Skill: system_info
+- 主力模型: Qwen3-8B（本地 vLLM）
+- 备用模型: Qwen3-14B（DashScope 云端）
+- 渠道: 飞书 WebSocket
+- 工具: 23 个内置工具（无自定义工具）
 
-## 重要踩坑记录
-1. NO_PROXY 必须包含 dashscope.aliyuncs.com，否则阿里云 API 走代理会超时
-2. Nginx /ws location 要在 proxy_pass 里注入 token
-3. 新 Skill 创建后必须 openclaw gateway --force 重启
+## 重要记录
+1. 3060 离线时自动回退云端模型
+2. 启动后自动发飞书通知
+3. 上下文窗口 24K tokens，系统提示 ~8K
 ```
 
 > **注意**：`MEMORY.md` 中不要放敏感信息（密码、API Key 等），因为它会被注入到每次 AI 会话的上下文中。
